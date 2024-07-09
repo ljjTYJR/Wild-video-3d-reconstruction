@@ -31,18 +31,18 @@ class CorrBlock:
 
         batch, num, h1, w1, h2, w2 = corr.shape
         corr = corr.reshape(batch*num*h1*w1, 1, h2, w2)
-        
+
         for i in range(self.num_levels):
             self.corr_pyramid.append(
                 corr.view(batch*num, h1, w1, h2//2**i, w2//2**i))
             corr = F.avg_pool2d(corr, 2, stride=2)
-            
+
     def __call__(self, coords):
         out_pyramid = []
         batch, num, ht, wd, _ = coords.shape
         coords = coords.permute(0,1,4,2,3)
         coords = coords.contiguous().view(batch*num, 2, ht, wd)
-        
+
         for i in range(self.num_levels):
             corr = CorrSampler.apply(self.corr_pyramid[i], coords/2**i, self.radius)
             out_pyramid.append(corr.view(batch, num, -1, ht, wd))
@@ -66,7 +66,7 @@ class CorrBlock:
         batch, num, dim, ht, wd = fmap1.shape
         fmap1 = fmap1.reshape(batch*num, dim, ht*wd) / 4.0
         fmap2 = fmap2.reshape(batch*num, dim, ht*wd) / 4.0
-        
+
         corr = torch.matmul(fmap1.transpose(1,2), fmap2)
         return corr.view(batch, num, ht, wd, ht, wd)
 
@@ -95,14 +95,14 @@ class AltCorrBlock:
 
         B, N, C, H, W = fmaps.shape
         fmaps = fmaps.view(B*N, C, H, W) / 4.0
-        
+
         self.pyramid = []
         for i in range(self.num_levels):
             sz = (B, N, H//2**i, W//2**i, C)
             fmap_lvl = fmaps.permute(0, 2, 3, 1).contiguous()
             self.pyramid.append(fmap_lvl.view(*sz))
             fmaps = F.avg_pool2d(fmaps, 2, stride=2)
-  
+
     def corr_fn(self, coords, ii, jj):
         B, N, H, W, S, _ = coords.shape
         coords = coords.permute(0, 1, 4, 2, 3, 5)
@@ -132,7 +132,7 @@ class AltCorrBlock:
             squeeze_output = True
 
         corr = self.corr_fn(coords, ii, jj)
-        
+
         if squeeze_output:
             corr = corr.squeeze(dim=-1)
 

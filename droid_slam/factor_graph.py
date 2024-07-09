@@ -102,16 +102,16 @@ class FactorGraph:
         # place limit on number of factors
         if self.max_factors > 0 and self.ii.shape[0] + ii.shape[0] > self.max_factors \
                 and self.corr is not None and remove:
-            
+
             ix = torch.arange(len(self.age))[torch.argsort(self.age).cpu()]
             self.rm_factors(ix >= self.max_factors - ii.shape[0], store=True)
 
-        net = self.video.nets[ii].to(self.device).unsqueeze(0)
+        net = self.video.nets[ii].to(self.device).unsqueeze(0) # Q? the gpu memory does not increase.
 
         # correlation volume for new edges
         if self.corr_impl == "volume":
             c = (ii == jj).long()
-            fmap1 = self.video.fmaps[ii,0].to(self.device).unsqueeze(0)
+            fmap1 = self.video.fmaps[ii,0].to(self.device).unsqueeze(0) # TODO: why self.video.fmaps is 512 in the first dimension?
             fmap2 = self.video.fmaps[jj,c].to(self.device).unsqueeze(0)
             corr = CorrBlock(fmap1, fmap2)
             self.corr = corr if self.corr is None else self.corr.cat(corr)
@@ -147,7 +147,7 @@ class FactorGraph:
         self.ii = self.ii[~mask]
         self.jj = self.jj[~mask]
         self.age = self.age[~mask]
-        
+
         if self.corr_impl == "volume":
             self.corr = self.corr[~mask]
 
@@ -203,7 +203,7 @@ class FactorGraph:
             coords1, mask = self.video.reproject(self.ii, self.jj)
             motn = torch.cat([coords1 - self.coords0, self.target - coords1], dim=-1)
             motn = motn.permute(0,1,4,2,3).clamp(-64.0, 64.0)
-        
+
         # correlation features
         corr = self.corr(coords1)
 
@@ -237,9 +237,9 @@ class FactorGraph:
             weight = weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
 
             # dense bundle adjustment
-            self.video.ba(target, weight, damping, ii, jj, t0, t1, 
+            self.video.ba(target, weight, damping, ii, jj, t0, t1,
                 itrs=itrs, lm=1e-4, ep=0.1, motion_only=motion_only)
-        
+
             if self.upsample:
                 self.video.upsample(torch.unique(self.ii), upmask)
 
@@ -273,7 +273,7 @@ class FactorGraph:
                 corr1 = corr_op(coords1[:,v], rig * iis, rig * jjs + (iis == jjs).long())
 
                 with torch.cuda.amp.autocast(enabled=True):
-                 
+
                     net, delta, weight, damping, upmask = \
                         self.update_op(self.net[:,v], self.video.inps[None,iis], corr1, motn[:,v], iis, jjs)
 
@@ -290,7 +290,7 @@ class FactorGraph:
             weight = self.weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
 
             # dense bundle adjustment
-            self.video.ba(target, weight, damping, self.ii, self.jj, 1, t, 
+            self.video.ba(target, weight, damping, self.ii, self.jj, 1, t,
                 itrs=itrs, lm=1e-5, ep=1e-2, motion_only=False)
 
             self.video.dirty[:t] = True
@@ -307,7 +307,7 @@ class FactorGraph:
         keep = ((ii - jj).abs() > c) & ((ii - jj).abs() <= r)
         self.add_factors(ii[keep], jj[keep])
 
-    
+
     def add_proximity_factors(self, t0=0, t1=0, rad=2, nms=2, beta=0.25, thresh=16.0, remove=False):
         """ add edges to the factor graph based on distance """
 
@@ -357,7 +357,7 @@ class FactorGraph:
 
             i = ii[k]
             j = jj[k]
-            
+
             # bidirectional
             es.append((i, j))
             es.append((j, i))

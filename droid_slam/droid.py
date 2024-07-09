@@ -28,7 +28,7 @@ class Droid:
 
         # frontend process
         self.frontend = DroidFrontend(self.net, self.video, self.args)
-        
+
         # backend process
         self.backend = DroidBackend(self.net, self.video, self.args)
 

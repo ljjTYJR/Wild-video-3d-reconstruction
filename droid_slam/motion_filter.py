@@ -13,7 +13,7 @@ class MotionFilter:
     """ This class is used to filter incoming frames and extract features """
 
     def __init__(self, net, video, thresh=2.5, device="cuda:0"):
-        
+
         # split net modules
         self.cnet = net.cnet
         self.fnet = net.fnet
@@ -28,7 +28,7 @@ class MotionFilter:
         # mean, std for image normalization
         self.MEAN = torch.as_tensor([0.485, 0.456, 0.406], device=self.device)[:, None, None]
         self.STDV = torch.as_tensor([0.229, 0.224, 0.225], device=self.device)[:, None, None]
-        
+
     @torch.cuda.amp.autocast(enabled=True)
     def __context_encoder(self, image):
         """ context features """
@@ -63,7 +63,7 @@ class MotionFilter:
             self.video.append(tstamp, image[0], Id, 1.0, depth, intrinsics / 8.0, gmap, net[0,0], inp[0,0])
 
         ### only add new frame if there is enough motion ###
-        else:                
+        else:
             # index correlation volume
             coords0 = pops.coords_grid(ht, wd, device=self.device)[None,None]
             corr = CorrBlock(self.fmap[None,[0]], gmap[None,[0]])(coords0)
@@ -88,7 +88,7 @@ class MotionFilter:
 #     """ This class is used to filter incoming frames and extract features """
 
 #     def __init__(self, net, video, thresh=2.5, device="cuda:0"):
-        
+
 #         # split net modules
 #         self.cnet = net.cnet
 #         self.fnet = net.fnet
@@ -103,7 +103,7 @@ class MotionFilter:
 #         # mean, std for image normalization
 #         self.MEAN = torch.as_tensor([0.485, 0.456, 0.406], device=self.device)[:, None, None]
 #         self.STDV = torch.as_tensor([0.229, 0.224, 0.225], device=self.device)[:, None, None]
-        
+
 #     @torch.cuda.amp.autocast(enabled=True)
 #     def __context_encoder(self, image):
 #         """ context features """
@@ -139,7 +139,7 @@ class MotionFilter:
 #             self.video.append(tstamp, image, Id, 1.0, intrinsics / 8.0, gmap[0], net[0], inp[0])
 
 #         ### only add new frame if there is enough motion ###
-#         else:                
+#         else:
 #             # index correlation volume
 #             coords0 = pops.coords_grid(ht, wd, device=self.device)[None,None]
 #             corr = CorrBlock(self.fmap[None], gmap[None])(coords0)
