@@ -7,7 +7,7 @@ import torch
 import lietorch
 import cv2
 import os
-import glob 
+import glob
 import time
 import argparse
 
@@ -103,6 +103,7 @@ if __name__ == '__main__':
     parser.add_argument("--backend_nms", type=int, default=3)
     parser.add_argument("--upsample", action="store_true")
     parser.add_argument("--reconstruction_path", help="path to saved reconstruction")
+    parser.add_argument("--mast3r_pred", action="store_true")
     args = parser.parse_args()
 
     args.stereo = False
@@ -125,7 +126,7 @@ if __name__ == '__main__':
         if droid is None:
             args.image_size = [image.shape[2], image.shape[3]]
             droid = Droid(args)
-        
+
         droid.track(t, image, intrinsics=intrinsics)
 
     if args.reconstruction_path is not None:

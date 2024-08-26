@@ -5,7 +5,13 @@ import numpy as np
 from lietorch import SE3
 from factor_graph import FactorGraph
 
+import rerun as rr
+import droid_backends
 
+from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
+from mast3r.model import AsymmetricMASt3R
+from mast3r.inference import mast3r_inference
+import torch.nn.functional as F
 class DroidFrontend:
     def __init__(self, net, video, args):
         self.video = video
@@ -32,6 +38,20 @@ class DroidFrontend:
         self.frontend_thresh = args.frontend_thresh
         self.frontend_radius = args.frontend_radius
 
+        # Mast3R related settings
+        self.mast3r_pred = args.mast3r_pred
+        self.mast3r_batch_size=1
+        self.mast3r_schedule='cosine'
+        self.mast3r_lr=0.01
+        self.opt_iter=300
+        self.mast3r_model_path="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
+        if self.mast3r_pred:
+            self.mast3r_model=AsymmetricMASt3R.from_pretrained(self.mast3r_model_path).to('cuda').eval()
+        else:
+            self.mast3r_model=None
+        self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
+        self.RES = 8.0
+
     def __update(self):
         """ add edges, perform update """
 
@@ -41,10 +61,10 @@ class DroidFrontend:
         if self.graph.corr is not None:
             self.graph.rm_factors(self.graph.age > self.max_age, store=True)
 
-        self.graph.add_proximity_factors(self.t1-5, max(self.t1-self.frontend_window, 0), 
+        self.graph.add_proximity_factors(self.t1-5, max(self.t1-self.frontend_window, 0),
             rad=self.frontend_radius, nms=self.frontend_nms, thresh=self.frontend_thresh, beta=self.beta, remove=True)
 
-        self.video.disps[self.t1-1] = torch.where(self.video.disps_sens[self.t1-1] > 0, 
+        self.video.disps[self.t1-1] = torch.where(self.video.disps_sens[self.t1-1] > 0,
            self.video.disps_sens[self.t1-1], self.video.disps[self.t1-1])
 
         for itr in range(self.iters1):
@@ -56,7 +76,7 @@ class DroidFrontend:
 
         if d.item() < self.keyframe_thresh:
             self.graph.rm_keyframe(self.t1 - 2)
-            
+
             with self.video.get_lock():
                 self.video.counter.value -= 1
                 self.t1 -= 1
@@ -85,12 +105,42 @@ class DroidFrontend:
 
         self.graph.add_proximity_factors(0, 0, rad=2, nms=2, thresh=self.frontend_thresh, remove=False)
 
-        for itr in range(8):
+        ### use the Mast3R for prediction
+        if self.mast3r_pred:
+            # push in images
+            for i in range(self.t1):
+                mast3r_image = set_as_dust3r_image(self.video.images[i].clone(), i)
+                self.mast3r_image_buffer.append(mast3r_image)
+            # inference
+            with torch.no_grad():
+                # NOTE: the current inference is just aligned with the first frame using 3D-3D correspondence
+                # TODO: use the Dust3R / 2D-2D correspondence to refine the result
+                scene = mast3r_inference(self.mast3r_image_buffer, self.mast3r_model, 'cuda')
+            # prepare the intrinsic parameters
+            focals = scene['focals']; cx = self.video.wd / 2; cy = self.video.ht / 2
+            avg_focal = focals.mean().item()
+            self.video.intrinsics[:self.t1] = torch.tensor([avg_focal, avg_focal, cx, cy]).cuda() / self.RES
+            # prepare the predicted depths
+            depths = scene['depths'][None]
+            depths = F.interpolate(depths, scale_factor=1/self.RES, mode='bilinear').squeeze()
+            # feed the depths into the video frames
+            self.video.disps_sens[:self.t1] = torch.where(depths > 0, 1.0/depths, depths)
+
+        for itr in range(10):
             self.graph.update(1, use_inactive=True)
+            """ code snippet for visualizing points in the rerun
+            # dirty_index = torch.range(0, self.t1-1).cuda().long()
+            # poses = torch.index_select(self.video.poses, 0, dirty_index)
+            # disps = torch.index_select(self.video.disps, 0, dirty_index)
+            # points = droid_backends.iproj(SE3(poses).inv().data, disps, self.video.intrinsics[0]).cpu()
+            # points = points.view(-1, 3)
+            # rr.set_time_sequence("#frame", itr)
+            # rr.log("initial points", rr.Points3D(points))
+            """
 
 
         # self.video.normalize()
-        self.video.poses[self.t1] = self.video.poses[self.t1-1].clone()
+        self.video.poses[self.t1] = self.video.poses[self.t1-1].clone() # initialization of the new frame
         self.video.disps[self.t1] = self.video.disps[self.t1-4:self.t1].mean()
 
         # initialization complete
@@ -111,9 +161,9 @@ class DroidFrontend:
         # do initialization
         if not self.is_initialized and self.video.counter.value == self.warmup:
             self.__initialize()
-            
+
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value:
             self.__update()
 
-        
+

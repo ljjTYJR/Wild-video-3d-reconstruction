@@ -24,7 +24,7 @@ class Droid:
         self.video = DepthVideo(args.image_size, args.buffer, stereo=args.stereo)
 
         # filter incoming frames so that there is enough motion
-        self.filterx = MotionFilter(self.net, self.video, thresh=args.filter_thresh)
+        self.filterx = MotionFilter(self.net, self.video, thresh=args.filter_thresh, mast3r_pred=args.mast3r_pred)
 
         # frontend process
         self.frontend = DroidFrontend(self.net, self.video, self.args)
