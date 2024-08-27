@@ -10,12 +10,12 @@ import torch
 ImgNorm = tvf.Compose([tvf.ToTensor(), tvf.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
 def _resize_pil_image(img, long_edge_size):
-    S = max(img.size)
+    S = max(img.size())
     if S > long_edge_size:
         interp = PIL.Image.LANCZOS
     elif S <= long_edge_size:
         interp = PIL.Image.BICUBIC
-    new_size = tuple(int(round(x*long_edge_size/S)) for x in img.size)
+    new_size = tuple(int(round(x*long_edge_size/S)) for x in img.size())
     return img.resize(new_size, interp)
 
 def set_as_dust3r_image(image, idx, size=512):

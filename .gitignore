@@ -157,4 +157,4 @@ figures/*.pdf
 
 
 # custom setting
-tmp_test.py
+test.py

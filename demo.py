@@ -42,8 +42,15 @@ def image_stream(imagedir, calib, stride):
             image = cv2.undistort(image, K, calib[4:])
 
         h0, w0, _ = image.shape
-        h1 = int(h0 * np.sqrt((384 * 512) / (h0 * w0)))
-        w1 = int(w0 * np.sqrt((384 * 512) / (h0 * w0)))
+        # h1 = int(h0 * np.sqrt((384 * 512) / (h0 * w0)))
+        # w1 = int(w0 * np.sqrt((384 * 512) / (h0 * w0)))
+        max_dimension = max(h0, w0)
+        if max_dimension!=512:
+            h1 = int(h0 * 512/max_dimension)
+            w1 = int(w0 * 512/max_dimension)
+        else:
+            h1 = h0
+            w1 = w0
 
         image = cv2.resize(image, (w1, h1))
         image = image[:h1-h1%8, :w1-w1%8]
@@ -104,6 +111,7 @@ if __name__ == '__main__':
     parser.add_argument("--upsample", action="store_true")
     parser.add_argument("--reconstruction_path", help="path to saved reconstruction")
     parser.add_argument("--mast3r_pred", action="store_true")
+    parser.add_argument("--rerun", action="store_true")
     args = parser.parse_args()
 
     args.stereo = False

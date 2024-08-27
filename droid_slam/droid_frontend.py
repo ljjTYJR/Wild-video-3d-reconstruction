@@ -52,6 +52,13 @@ class DroidFrontend:
         self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
         self.RES = 8.0
 
+        # visualizer
+        if args.rerun:
+            from rerun_visualizer import RerunVisualizer
+            self.rr_vis = RerunVisualizer(self.video)
+        else:
+            self.rr_vis = None
+
     def __update(self):
         """ add edges, perform update """
 
@@ -126,18 +133,10 @@ class DroidFrontend:
             # feed the depths into the video frames
             self.video.disps_sens[:self.t1] = torch.where(depths > 0, 1.0/depths, depths)
 
-        for itr in range(10):
+        for itr in range(8):
             self.graph.update(1, use_inactive=True)
-            """ code snippet for visualizing points in the rerun
-            # dirty_index = torch.range(0, self.t1-1).cuda().long()
-            # poses = torch.index_select(self.video.poses, 0, dirty_index)
-            # disps = torch.index_select(self.video.disps, 0, dirty_index)
-            # points = droid_backends.iproj(SE3(poses).inv().data, disps, self.video.intrinsics[0]).cpu()
-            # points = points.view(-1, 3)
-            # rr.set_time_sequence("#frame", itr)
-            # rr.log("initial points", rr.Points3D(points))
-            """
-
+            if self.rr_vis is not None:
+                self.rr_vis(True, True, True, True, itr)
 
         # self.video.normalize()
         self.video.poses[self.t1] = self.video.poses[self.t1-1].clone() # initialization of the new frame
@@ -165,5 +164,7 @@ class DroidFrontend:
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value:
             self.__update()
+            if self.rr_vis is not None:
+                self.rr_vis(True, True, True, True, None)
 
 
