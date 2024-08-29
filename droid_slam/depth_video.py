@@ -11,7 +11,7 @@ import geom.projective_ops as pops
 
 class DepthVideo:
     def __init__(self, image_size=[480, 640], buffer=1024, stereo=False, device="cuda:0"):
-                
+
         # current keyframe count
         self.counter = Value('i', 0)
         self.ready = Value('i', 0)
@@ -39,14 +39,14 @@ class DepthVideo:
 
         # initialize poses to identity transformation
         self.poses[:] = torch.as_tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float, device="cuda")
-        
+
     def get_lock(self):
         return self.counter.get_lock()
 
     def __item_setter(self, index, item):
         if isinstance(index, int) and index >= self.counter.value:
             self.counter.value = index + 1
-        
+
         elif isinstance(index, torch.Tensor) and index.max().item() > self.counter.value:
             self.counter.value = index.max().item() + 1
 
@@ -154,7 +154,7 @@ class DepthVideo:
             return_matrix = True
             N = self.counter.value
             ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N))
-        
+
         ii, jj = DepthVideo.format_indicies(ii, jj)
 
         if bidirectional:

@@ -24,7 +24,7 @@ class FactorGraph:
         self.coords0 = pops.coords_grid(ht, wd, device=device)
         self.ii = torch.as_tensor([], dtype=torch.long, device=device)
         self.jj = torch.as_tensor([], dtype=torch.long, device=device)
-        self.age = torch.as_tensor([], dtype=torch.long, device=device)
+        self.age = torch.as_tensor([], dtype=torch.long, device=device) # the `age` is attached to the factor, maasuring the optimization time of one facotr.
 
         self.corr, self.net, self.inp = None, None, None
         self.damping = 1e-6 * torch.ones_like(self.video.disps)
@@ -333,7 +333,7 @@ class FactorGraph:
                         j1 = j + dj
 
                         if (t0 <= i1 < t) and (t1 <= j1 < t):
-                            d[(i1-t0)*(t-t1) + (j1-t1)] = np.inf
+                            d[(i1-t0)*(t-t1) + (j1-t1)] = np.inf # remove the same factor ?Fuck, how is realized
 
 
         es = []

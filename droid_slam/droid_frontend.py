@@ -12,6 +12,9 @@ from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
 from mast3r.model import AsymmetricMASt3R
 from mast3r.inference import mast3r_inference
 import torch.nn.functional as F
+from droid_utils import droid_transform
+
+import open3d as o3d
 class DroidFrontend:
     def __init__(self, net, video, args):
         self.video = video
@@ -50,6 +53,9 @@ class DroidFrontend:
         else:
             self.mast3r_model=None
         self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
+        self.mast3r_window = 8
+        self.mast3r_window_pose = torch.zeros(self.mast3r_window, 4, 4).cuda()
+        self.mast3r_window_depths = torch.zeros(self.mast3r_window, self.video.ht, self.video.wd).cuda()
         self.RES = 8.0
 
         # visualizer
@@ -72,7 +78,7 @@ class DroidFrontend:
             rad=self.frontend_radius, nms=self.frontend_nms, thresh=self.frontend_thresh, beta=self.beta, remove=True)
 
         self.video.disps[self.t1-1] = torch.where(self.video.disps_sens[self.t1-1] > 0,
-           self.video.disps_sens[self.t1-1], self.video.disps[self.t1-1])
+           self.video.disps_sens[self.t1-1], self.video.disps[self.t1-1]) # if true, select disps_sens, otherwise disps # initialize the new frame
 
         for itr in range(self.iters1):
             self.graph.update(None, None, use_inactive=True)
@@ -107,11 +113,6 @@ class DroidFrontend:
 
         self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 
-        for itr in range(8):
-            self.graph.update(1, use_inactive=True)
-
-        self.graph.add_proximity_factors(0, 0, rad=2, nms=2, thresh=self.frontend_thresh, remove=False)
-
         ### use the Mast3R for prediction
         if self.mast3r_pred:
             # push in images
@@ -135,8 +136,51 @@ class DroidFrontend:
 
         for itr in range(8):
             self.graph.update(1, use_inactive=True)
+
+        self.graph.add_proximity_factors(0, 0, rad=2, nms=2, thresh=self.frontend_thresh, remove=False)
+
+        for itr in range(8):
+            self.graph.update(1, use_inactive=True)
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, itr)
+
+        # 1. visualize the DROID optimized point cloud
+        """
+        # DEBUG: up-sample the generated depth map and compared to initial mast3r prediction.
+        # 1. the DROID optimized point cloud
+        droid_depths = (1 / self.video.disps[:self.t1].clone())[None]
+        droid_depths = F.interpolate(droid_depths, scale_factor=self.RES, mode='bilinear').squeeze()
+        droid_depths = 1 / droid_depths
+        ## to the point cloud
+        pcd_droid = o3d.geometry.PointCloud()
+        points = droid_backends.iproj(SE3(self.video.poses).inv().data, droid_depths, self.video.intrinsics[0] * self.RES)
+        for i in range(self.t1):
+            pcd_tmp = o3d.geometry.PointCloud()
+            pcd_tmp.points = o3d.utility.Vector3dVector(points[i].reshape(-1,3).cpu().numpy())
+            # color = self.video.images[i][:, [2,1,0]].cpu().numpy().transpose(1,2,0)
+            color = self.video.images[i][[2,1,0]].cpu().numpy().transpose(1,2,0) / 255.0
+            pcd_tmp.colors = o3d.utility.Vector3dVector(color.reshape(-1,3))
+            pcd_droid += pcd_tmp
+        # o3d.visualization.draw_geometries([pcd_droid])
+        """
+        # 2. the Mast3R optimized point cloud
+        """
+        mast3r_poses = scene['poses'].cpu().numpy() # (N,4,4)
+        mast3r_intr = self.video.intrinsics[0].cpu().numpy() * self.RES
+        droid_poses = SE3(self.video.poses[:self.t1]).inv().matrix().cpu().numpy() # camera to world
+        pcd_all = o3d.geometry.PointCloud()
+        for i in range(self.t1):
+            mast3r_depth = scene['depths'][i].cpu().numpy()
+            mast3r_points = droid_transform.depth2points(mast3r_depth, mast3r_intr)
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(mast3r_points.reshape(-1,3))
+            color = self.video.images[i][[2,1,0]].cpu().numpy().transpose(1,2,0) / 255.0
+            pcd.colors = o3d.utility.Vector3dVector(color.reshape(-1,3))
+            # pcd.transform(mast3r_poses[i])
+            pcd.transform(droid_poses[i])
+            pcd_all += pcd
+        o3d.visualization.draw_geometries([pcd_all])
+        """
 
         # self.video.normalize()
         self.video.poses[self.t1] = self.video.poses[self.t1-1].clone() # initialization of the new frame
@@ -154,6 +198,13 @@ class DroidFrontend:
 
         self.graph.rm_factors(self.graph.ii < self.warmup-4, store=True)
 
+        # for the mast3r SLAM pipeline, initialize the mast3r window
+        # in fact, these are shared across the mast3r and droid, we do not need to maintain two copies
+        # but we can choose to run which (in case of no memory)
+        if self.mast3r_pred:
+            for i in range(self.t1):
+                self.mast3r_window_depths[i] = scene['depths'][i].clone()
+
     def __call__(self):
         """ main update """
 
@@ -162,7 +213,7 @@ class DroidFrontend:
             self.__initialize()
 
         # do update
-        elif self.is_initialized and self.t1 < self.video.counter.value:
+        elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
             self.__update()
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)
