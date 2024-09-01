@@ -10,7 +10,7 @@ import droid_backends
 
 from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
 from mast3r.model import AsymmetricMASt3R
-from mast3r.inference import mast3r_inference
+from mast3r.inference import mast3r_inference_init, mast3r_inference
 import torch.nn.functional as F
 from droid_utils import droid_transform
 
@@ -53,10 +53,11 @@ class DroidFrontend:
         else:
             self.mast3r_model=None
         self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
-        self.mast3r_window = 8
-        self.mast3r_window_pose = torch.zeros(self.mast3r_window, 4, 4).cuda()
+        self.mast3r_window = 8 # TODO: hyper-parameters
+        # self.mast3r_window_pose = torch.zeros(self.mast3r_window, 4, 4).cuda()
         self.mast3r_window_depths = torch.zeros(self.mast3r_window, self.video.ht, self.video.wd).cuda()
         self.RES = 8.0
+        self.mast3r_keyframe = 0
 
         # visualizer
         if args.rerun:
@@ -105,6 +106,29 @@ class DroidFrontend:
         # update visualization
         self.video.dirty[self.graph.ii.min():self.t1] = True
 
+    def __mast3r_update(self):
+        """ Run the Mast3R-facilicated SLAM pipeline """
+        # first, is there new keyframe coming in? # TODO: now, the keyframe control is based on the DROID strategy
+        if self.mast3r_keyframe == self.t1: # No new keyframe
+            return
+        elif self.mast3r_keyframe < self.t1: # new keyframe
+            assert self.mast3r_keyframe == self.t1 - 1
+            # organize the Mast3R window and conducting the local alignment
+            # what do we need? --> the image (for mast3r model inference); the camera poses (from the DROID); the fixed initial point cloud(for scale alignment)
+            # we choose from the latest mast3r_window frames from droid.video and run dust3r-like global alignment
+            mast3r_t0 = max(self.t1 - self.mast3r_window, 0)
+            mast3r_t1 = self.t1 # it means there are totally t1 frames, the index is t1-1
+            # prepare the Mast3R window, for images, the index always start from 0.
+            mast3r_images = [set_as_dust3r_image(self.video.images[i].clone(), i-mast3r_t0) for i in range(mast3r_t0, mast3r_t1)]
+            mast3r_cam_poses = self.video.poses[mast3r_t0:mast3r_t1].clone()
+            mast3r_inv_depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
+            mast3r_intrinsic = self.video.intrinsics[0].clone()
+            # do the global alignment to solve the last frame prediction only!
+            scene = mast3r_inference(mast3r_images, mast3r_cam_poses, mast3r_inv_depths, self.RES, mast3r_intrinsic, self.mast3r_model, 'cuda')
+
+        else: # error frames
+            raise ValueError("Invalid keyframe index")
+
     def __initialize(self):
         """ initialize the SLAM system """
 
@@ -123,7 +147,7 @@ class DroidFrontend:
             with torch.no_grad():
                 # NOTE: the current inference is just aligned with the first frame using 3D-3D correspondence
                 # TODO: use the Dust3R / 2D-2D correspondence to refine the result
-                scene = mast3r_inference(self.mast3r_image_buffer, self.mast3r_model, 'cuda')
+                scene = mast3r_inference_init(self.mast3r_image_buffer, self.mast3r_model, 'cuda')
             # prepare the intrinsic parameters
             focals = scene['focals']; cx = self.video.wd / 2; cy = self.video.ht / 2
             avg_focal = focals.mean().item()
@@ -161,7 +185,7 @@ class DroidFrontend:
             color = self.video.images[i][[2,1,0]].cpu().numpy().transpose(1,2,0) / 255.0
             pcd_tmp.colors = o3d.utility.Vector3dVector(color.reshape(-1,3))
             pcd_droid += pcd_tmp
-        # o3d.visualization.draw_geometries([pcd_droid])
+        o3d.visualization.draw_geometries([pcd_droid])
         """
         # 2. the Mast3R optimized point cloud
         """
@@ -204,6 +228,7 @@ class DroidFrontend:
         if self.mast3r_pred:
             for i in range(self.t1):
                 self.mast3r_window_depths[i] = scene['depths'][i].clone()
+            self.mast3r_keyframe = self.t1
 
     def __call__(self):
         """ main update """
@@ -214,7 +239,13 @@ class DroidFrontend:
 
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
+            # DROID-SLAM
             self.__update()
+
+            # MAST3R-SLAM: based on DROID keyframes
+            if self.mast3r_pred:
+                self.__mast3r_update()
+
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)
 
