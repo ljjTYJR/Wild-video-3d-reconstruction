@@ -14,3 +14,6 @@ Use the [Mast3R model](https://github.com/naver/mast3r) and [DROID-SLAM](https:/
 # Tips
 - When visualizing the point cloud in the `rerun`, we would better to visualize based on the camera paths.
 - When feeding to the mast3r model, the depths larger than 2*`median` values are clamped to 2*`median`, which might incur problems.
+
+# Todo
+- [ ] visualize the updated local map after the mast3r prediction to check the mast3r optimization correct.

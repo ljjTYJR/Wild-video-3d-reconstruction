@@ -12,7 +12,9 @@ import torch.nn.functional as F
 from dust3r.image_pairs import make_pairs
 from dust3r.post_process import estimate_focal_knowing_depth
 from dust3r.utils.geometry import xy_grid, geotrf
-from dust3r.cloud_opt.commons import edge_str, signed_expm1, signed_log1p
+from dust3r.cloud_opt.commons import (edge_str, signed_expm1, signed_log1p,
+                                      ALL_DISTS, cosine_schedule, linear_schedule)
+from dust3r.optim_factory import adjust_learning_rate_by_lr
 from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference, paris_symmetric_inference
 from mast3r.fast_nn import fast_reciprocal_NNs_sample
 from mast3r.usage import rigid_points_registration
@@ -135,7 +137,8 @@ def get_conf_trf(mode):
         return conf_trf
 
 def _ravel_hw(x):
-    return x.ravel()
+    x = x.view((x.shape[0] * x.shape[1],) + x.shape[2:])
+    return x
 
 def ParameterStack(params, keys=None, is_param=None, fill=0):
     if keys is not None:
@@ -165,12 +168,12 @@ class LocalBA(nn.Module):
         self.known_poses = known_poses
         self.known_inv_depths = 1.0/known_depths
         self.known_intrinsics = intrinsics
+        self.dist = ALL_DISTS['l1']
+        # TODO
         # symmetry = True if len(next(iter(preds.items()))[1]) > 2 else False
         self.symmetrized = False
         self.edges = [(int(i), int(j)) for i, j in preds.keys()]
         # optimizable parameters
-        # self.opt_depths = nn.Parameter(torch.zeros(self.H, self.W, device=device, dtype=torch.float32)) # will be initialized
-        # self.opt_pose = nn.Parameter(torch.randn(self.POSE_DIM, device=device, dtype=torch.float32))
         # model predicted data
         pred_pts = [pred for pred in preds.values()]
         pred1_pts = [pts[0]['pts3d'].squeeze(0) for pts in pred_pts]
@@ -191,16 +194,22 @@ class LocalBA(nn.Module):
         self.register_buffer('_stacked_pred_pts_j', ParameterStack(self.pred_pts_j, self.str_edges))
         self.register_buffer('_ei', torch.tensor([i for i, j in self.edges]))
         self.register_buffer('_ej', torch.tensor([j for i, j in self.edges]))
+        im_shapes = [(self.H, self.W) for i in range(self.known_cams + self.opt_cams)] # TODO: in fact, should align to the input image size
+        im_areas = [H * W for H, W in im_shapes]
+        self.total_area_i = sum([im_areas[i] for i, j in self.edges])
+        self.total_area_j = sum([im_areas[j] for i, j in self.edges])
+
         # optimizable pair-wise alignment poses
-        self.pw_poses = nn.Parameter(torch.randn((self.n_edges, 1+self.POSE_DIM))) # [rotation, translation, scale] <-> [x, y, z, w, tx, ty, tz, scale]
+        self.pw_poses = nn.Parameter(torch.randn((self.n_edges, 1+self.POSE_DIM))) # [rotation, translation, scale] <-> [x, y, z, w, tx, ty, tz, scale], scale is the log scale
 
         # initialize the last frame depth and pose for optimization
         # use the `log` function to avoid the negative depth
         self.opt_depths = torch.nn.Parameter(torch.log(known_depths[-1].clone()).ravel())
         # known_poses: [translation, rotation] <-> [tx, ty, tz, x, y, z, w]; opt_pose: [rotation, translation] <-> [x, y, z, w, tx, ty, tz]
         last_frame_cam2w = SE3(known_poses[-1]).inv().data
-        self.opt_pose = torch.nn.Parameter(last_frame_cam2w.clone()[[3, 4, 5, 6, 0, 1, 2]])
-        self.opt_pose[4:7] = signed_log1p(self.opt_pose[4:7])
+        _opt_pose = last_frame_cam2w.clone()[[3, 4, 5, 6, 0, 1, 2]]
+        _opt_pose[4:7] = signed_log1p(_opt_pose[4:7])
+        self.opt_pose = nn.Parameter(_opt_pose.clone())
 
     @property
     def n_edges(self):
@@ -210,6 +219,15 @@ class LocalBA(nn.Module):
     def str_edges(self):
         return [edge_str(i, j) for i, j in self.edges]
 
+    def _get_poses(self, poses):
+        # normalize rotation
+        if poses.dim() < 2:
+            poses = poses[None]
+        Q = poses[:, :4]
+        T = signed_expm1(poses[:, 4:7])
+        RT = roma.RigidUnitQuat(Q, T).normalize().to_homogeneous()
+        return RT
+
     @torch.no_grad()
     def _compute_img_conf(self, pred1_conf, pred2_conf):
         im_conf = nn.ParameterList([torch.zeros(self.H, self.W, device=self.device) for i in range(self.known_cams + self.opt_cams)])
@@ -218,14 +236,6 @@ class LocalBA(nn.Module):
             im_conf[j] = torch.maximum(im_conf[j], pred2_conf[e])
         return im_conf
 
-    def _get_poses(self, poses):
-        # normalize rotation
-        if poses.dim() < 2:
-            poses = poses[None]
-        Q = poses[:, :4]
-        T = signed_expm1(poses[:, 4:7])
-        RT = roma.RigidUnitQuat(Q, T).normalize().to_homogeneous() # the quaterion order:
-        return RT
 
     def get_pw_scale(self):
         """ return the optimized scale of pair-wise prediction """
@@ -271,7 +281,7 @@ class LocalBA(nn.Module):
         opt_pose = self.get_opt_pose()
         opt_points = self.get_opt_points()[None]
         # NOTE
-        opt_points = geotrf(opt_pose, opt_points).squeeze(0) # (B, 4, 4) x (B, N, 3)
+        opt_points = geotrf(opt_pose, opt_points) # (B, 4, 4) x (B, N, 3)
 
         """ visualize and compare the initialzed points
         known_poses = self.known_poses
@@ -295,10 +305,14 @@ class LocalBA(nn.Module):
         pw_poses = self.get_pw_poses()
         fixed_pts3d = self.get_fixed_pts3d()[:self.known_cams] # BxNx3
         opt_pts3d = self.get_opt_pts3d() # 1xNx3
-        # get the image projected points (global coordinate)
-        # transform predicted points in the global coordinate
-        # construct the 3D loss and minimize it
-        pass
+        pts3d = torch.cat((fixed_pts3d, opt_pts3d), dim=0) # (B+1)xNx3
+
+        aligned_pred_i = geotrf(pw_poses, self._stacked_pred_pts_i)
+        aligned_pred_j = geotrf(pw_poses, self._stacked_pred_pts_j)
+
+        li = self.dist(pts3d[self._ei], aligned_pred_i, weight=self._weight_i).sum() / self.total_area_i
+        lj = self.dist(pts3d[self._ej], aligned_pred_j, weight=self._weight_j).sum() / self.total_area_j
+        return li + lj
 
 def mast3r_inference_init(images, model, device='cuda'):
     """
@@ -317,6 +331,41 @@ def mast3r_inference_init(images, model, device='cuda'):
 
     # return the result
     return scene
+
+@torch.cuda.amp.autocast(enabled=False)
+def global_alignment_loop(scene, lr=0.01, niter=200, schedule='cosine', lr_min=1e-6):
+    params = [p for p in scene.parameters() if p.requires_grad]
+    if not params:
+        return scene
+
+    # TODO: verbose or not to print detailed information
+    print("global alignment, optimizing for:")
+    print([name for name, value in scene.named_parameters() if value.requires_grad])
+
+    lr_base = lr
+    optimizer = torch.optim.Adam(params, lr=lr, betas=(0.9, 0.9))
+    with tqdm(total=niter) as pbar:
+        while pbar.n < pbar.total:
+            loss = global_alignment_iter(scene, pbar.n, niter, lr_base, lr_min, optimizer, schedule)
+            pbar.set_postfix_str(f'{lr=:g} loss={loss:g}')
+            pbar.update()
+    return loss
+
+def global_alignment_iter(net, cur_iter, niter, lr_base, lr_min, optimizer, schedule):
+    t = cur_iter / niter
+    if schedule == 'cosine':
+        lr = cosine_schedule(t, lr_base, lr_min)
+    elif schedule == 'linear':
+        lr = linear_schedule(t, lr_base, lr_min)
+    else:
+        raise ValueError(f'bad lr {schedule=}')
+    adjust_learning_rate_by_lr(optimizer, lr)
+    optimizer.zero_grad()
+    loss = net()
+    loss.backward()
+    optimizer.step()
+
+    return float(loss)
 
 def mast3r_inference(images, cam_poses, depths, RES, intrinsics, model, device='cuda'):
     """
@@ -338,7 +387,9 @@ def mast3r_inference(images, cam_poses, depths, RES, intrinsics, model, device='
     #TODO: clean the point cloud, for those depths larger than 2xmedian, make them 2xmedian
     for i in range(N_images):
         depths[i] = depths[i].clamp(0, 2 * depths[i].median())
-    scene = LocalBA(cam_poses, depths, out, intrinsics, device=device)
-    scene.to(device)
-    scene()
+
+    with torch.enable_grad():
+        scene = LocalBA(cam_poses, depths, out, intrinsics, device=device).to(device)
+        # construct the optimizer and do the optimization loop
+        global_alignment_loop(scene)
 
