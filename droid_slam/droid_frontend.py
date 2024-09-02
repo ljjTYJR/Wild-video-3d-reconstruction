@@ -125,6 +125,54 @@ class DroidFrontend:
             mast3r_intrinsic = self.video.intrinsics[0].clone()
             # do the global alignment to solve the last frame prediction only!
             scene = mast3r_inference(mast3r_images, mast3r_cam_poses, mast3r_inv_depths, self.RES, mast3r_intrinsic, self.mast3r_model, 'cuda')
+            opt_depth = scene.get_opt_depth_droid # the returned depth is the real depth instead of inverse, for droid, there should be inverse
+            opt_pose = scene.get_opt_pose_droid
+            # sychronize the depth and pose to the DROID
+            opt_depth = F.interpolate(opt_depth[None][None], scale_factor=1/self.RES, mode='bilinear').squeeze()
+            self.video.disps[self.t1 - 1] = 1.0 / opt_depth
+            # NOTE: the droid pose is world2camera, while the mast3r pose is camera2world
+            droid_opt_pose = SE3(opt_pose).inv().data
+            self.video.poses[self.t1 - 1] = droid_opt_pose
+
+            # DEBUG: visualize the optimized point cloud from mast3r prediction
+            """
+            fixed_pts3d = scene.get_fixed_pts3d()[:scene.known_cams] # BxNx3
+            opt_pts3d = scene.get_opt_pts3d() # 1xNx3
+            pts3d = torch.cat((fixed_pts3d, opt_pts3d), dim=0) # (B+1)xNx3
+            pcd_all = o3d.geometry.PointCloud()
+            for i in range(len(pts3d)):
+                pcd_tmp = o3d.geometry.PointCloud()
+                pcd_tmp.points = o3d.utility.Vector3dVector(pts3d[i].cpu().numpy())
+                if i == len(pts3d) - 1:
+                    # orange
+                    pcd_tmp.paint_uniform_color([1, 0.706, 0])
+                else:
+                    # blue
+                    pcd_tmp.paint_uniform_color([0, 0.651, 0.929])
+                pcd_all += pcd_tmp
+            o3d.visualization.draw_geometries([pcd_all])
+            """
+
+            """
+            # DBUEG: visualize the final optimized point cloud
+            _poses = SE3(self.video.poses[mast3r_t0:mast3r_t1]).inv().data
+            _depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
+            points = droid_backends.iproj(_poses, _depths, self.video.intrinsics[0])
+            pcd_all = o3d.geometry.PointCloud()
+            for i in range(len(points)):
+                _points = points[i].cpu().numpy().reshape(-1, 3)
+                # clip the depths of _points to 3*median
+                _median = np.median(_points[:,2])
+                mask = _points[:,2] < 5 * _median
+                _points = _points[mask]
+                _pcd = o3d.geometry.PointCloud()
+                _pcd.points = o3d.utility.Vector3dVector(_points)
+                _color = self.video.images[i+mast3r_t0][[2,1,0], 3::8,3::8].cpu().numpy().transpose(1,2,0) / 255.0
+                _color = _color.reshape(-1,3)[mask]
+                _pcd.colors = o3d.utility.Vector3dVector(_color)
+                pcd_all += _pcd
+            o3d.visualization.draw_geometries([pcd_all])
+            """
 
         else: # error frames
             raise ValueError("Invalid keyframe index")

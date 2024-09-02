@@ -16,4 +16,17 @@ Use the [Mast3R model](https://github.com/naver/mast3r) and [DROID-SLAM](https:/
 - When feeding to the mast3r model, the depths larger than 2*`median` values are clamped to 2*`median`, which might incur problems.
 
 # Todo
-- [ ] visualize the updated local map after the mast3r prediction to check the mast3r optimization correct.
+- [ ] visualize the Mast3R local map: pass the optimized pose and depth back to DROID and update it.
+- [x] Visualize the optimization process, the `opt_points` change process
+- [x] Try without DOIRD initialization to optimize the Mast3R point cloud, will the result be better?
+- [x] Initialize the `pw_poses` with the initial registration result (assuming that the gradient-based optimization is sensitive to the initialization)
+  - The creteria should be that the initial guess align well (though not perfectly).
+  - Currently we use the `log` of confidence when registration, test whether we need it or not.
+  - *Bug reason*: the pose in the DROID is world-to-camera while the pose in the dust3r is camera to world.
+- [ ] Use the `dust3r` initialized map to feed the DROID and run optimization again.
+
+# Notes
+- In the Mast3R optimized point cloud, there is distoration in the optimized points (which might be a problem). This can come from the incorrect intrinsics
+
+# Bug reports
+- [ ] Currently, there is a bug in the Mast3R SLAM optimization process, the final optimized result is not correct. Figure out why! The expected result at least should re-produce the result as in the `reproduce_bug.py` in the `duslam` project.
