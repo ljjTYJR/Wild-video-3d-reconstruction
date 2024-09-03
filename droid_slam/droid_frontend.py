@@ -131,18 +131,16 @@ class DroidFrontend:
         d = self.video.distance([self.t1-2], [self.t1-1], beta=self.beta, bidirectional=True)
 
         if d.item() < self.keyframe_thresh:
-            # TODO
-            # remove the t1-1 frame in the video
+            #NOTE: remove the t1-1 frame in the video? No need to do so, we just need the counter and to control the video buffer and keyframe index.
             with self.video.get_lock():
-                # not chosen as the keyframe
                 self.video.counter.value -= 1
                 self.t1 -= 1
         else:
-            # choose as the keyframe
-            # TODO: do the dust3r-based refinement
+            # Select a new keyframe, feed them into the dust3r and then output the new optimized keyframe
+
             # for itr in range(self.iters2):
             #     self.graph.update(None, None, use_inactive=True)
-            pass
+            return
         """
         # set pose for next itration
         self.video.poses[self.t1] = self.video.poses[self.t1-1]
@@ -182,7 +180,7 @@ class DroidFrontend:
             droid_opt_pose = SE3(opt_pose).inv().data
             self.video.poses[self.t1 - 1] = droid_opt_pose
 
-            # DEBUG: visualize the optimized point cloud from mast3r prediction
+            ### DEBUG: visualize the optimized point cloud from mast3r prediction
             """
             fixed_pts3d = scene.get_fixed_pts3d()[:scene.known_cams] # BxNx3
             opt_pts3d = scene.get_opt_pts3d() # 1xNx3
@@ -201,7 +199,7 @@ class DroidFrontend:
             o3d.visualization.draw_geometries([pcd_all])
             """
 
-            # DBUEG: visualize the final optimized point cloud
+            # --------DBUEG: visualize the final optimized point cloud--------
             """
             _poses = SE3(self.video.poses[mast3r_t0:mast3r_t1]).inv().data
             _depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
@@ -210,17 +208,16 @@ class DroidFrontend:
             for i in range(len(points)):
                 _points = points[i].cpu().numpy().reshape(-1, 3)
                 # clip the depths of _points to 3*median
-                _median = np.median(_points[:,2])
-                mask = _points[:,2] < 2 * _median
-                _points = _points[mask]
+                _points = _points
                 _pcd = o3d.geometry.PointCloud()
                 _pcd.points = o3d.utility.Vector3dVector(_points)
                 _color = self.video.images[i+mast3r_t0][[2,1,0], 3::8,3::8].cpu().numpy().transpose(1,2,0) / 255.0
-                _color = _color.reshape(-1,3)[mask]
+                _color = _color.reshape(-1,3)
                 _pcd.colors = o3d.utility.Vector3dVector(_color)
                 pcd_all += _pcd
             o3d.visualization.draw_geometries([pcd_all])
             """
+            # -----------------------------------------------------------------
 
             # update the keyframe index
             self.mast3r_keyframe = self.mast3r_keyframe + 1
@@ -339,8 +336,8 @@ class DroidFrontend:
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
             # DROID-SLAM: motion-only bundle adjustment to detect the new keyframe
-            # self.___motion_only_ba_detection()
-            self.__update()
+            self.___motion_only_ba_detection()
+            # self.__update()
 
             # MAST3R-SLAM: based on DROID keyframes
             if self.mast3r_pred:

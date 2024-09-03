@@ -23,7 +23,9 @@ Use the [Mast3R model](https://github.com/naver/mast3r) and [DROID-SLAM](https:/
   - The creteria should be that the initial guess align well (though not perfectly).
   - Currently we use the `log` of confidence when registration, test whether we need it or not.
   - *Bug reason*: the pose in the DROID is world-to-camera while the pose in the dust3r is camera to world.
-- [ ] Use the `dust3r` initialized map to feed the DROID and run optimization again.
+- [x] Use the `dust3r` initialized map to feed the DROID and run optimization again.
+- [ ] Test the new motion-only keyframe detection and initialize with the dust3r
+  - [ ] initialize the new keyframe in the dust3r by the pair-wise prediction.
 
 # Notes
 - In the Mast3R optimized point cloud, there is distoration in the optimized points (which might be a problem). This can come from the incorrect intrinsics

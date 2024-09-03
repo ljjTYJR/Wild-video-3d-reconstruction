@@ -11,9 +11,10 @@ import torch.nn.functional as F
 
 from dust3r.image_pairs import make_pairs
 from dust3r.post_process import estimate_focal_knowing_depth
-from dust3r.utils.geometry import xy_grid, geotrf
+from dust3r.utils.geometry import xy_grid, geotrf, inv
 from dust3r.cloud_opt.commons import (edge_str, signed_expm1, signed_log1p,
                                       ALL_DISTS, cosine_schedule, linear_schedule)
+from dust3r.cloud_opt.init_im_poses import fast_pnp
 from dust3r.optim_factory import adjust_learning_rate_by_lr
 from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference, paris_symmetric_inference
 from mast3r.fast_nn import fast_reciprocal_NNs_sample
@@ -200,16 +201,17 @@ class LocalBA(nn.Module):
         self.total_area_j = sum([im_areas[j] for i, j in self.edges])
 
         # optimizable pair-wise alignment poses
-        self.pw_poses = nn.Parameter(torch.randn((self.n_edges, 1+self.POSE_DIM))) # [rotation, translation, scale] <-> [x, y, z, w, tx, ty, tz, scale], scale is the log scale
+        self.pw_poses = nn.Parameter(torch.randn((self.n_edges, 1+self.POSE_DIM), device=device)) # [rotation, translation, scale] <-> [x, y, z, w, tx, ty, tz, scale], scale is the log scale
 
+        # TODO: clean the code, no need to initialize from DROID now.
         # initialize the last frame depth and pose for optimization
         # use the `log` function to avoid the negative depth
         self.opt_depths = nn.Parameter(torch.log(known_depths[-1].clone()).ravel())
         # known_poses: [translation, rotation] <-> [tx, ty, tz, x, y, z, w]; opt_pose: [rotation, translation] <-> [x, y, z, w, tx, ty, tz]
-        last_frame_cam2w = SE3(known_poses[-1]).inv().data
-        _opt_pose = last_frame_cam2w.clone()[[3, 4, 5, 6, 0, 1, 2]]
-        _opt_pose[4:7] = signed_log1p(_opt_pose[4:7])
-        self.opt_pose = nn.Parameter(_opt_pose.clone()) # opt_pose: [rotation, translation], and translation is the log scale
+        # last_frame_cam2w = SE3(known_poses[-1]).inv().data
+        # _opt_pose = last_frame_cam2w.clone()[[3, 4, 5, 6, 0, 1, 2]]
+        # _opt_pose[4:7] = signed_log1p(_opt_pose[4:7])
+        self.opt_pose = nn.Parameter(torch.randn(self.POSE_DIM)) # opt_pose: [rotation, translation], and translation is the log scale
 
         # rerun inspection
         ### --------debug-------- ###
@@ -242,6 +244,7 @@ class LocalBA(nn.Module):
             pose.data[-1] = np.log(float(scale))
         return pose
 
+    @torch.no_grad()
     def initialize_local_map_params(self):
         """ Since gradient-based optimization method is sensitive to initial guess, we need to initialize the pw_poses instead of random values """
         reference = self.get_fixed_pts3d()[:self.known_cams] # BxNx3
@@ -254,6 +257,32 @@ class LocalBA(nn.Module):
             # estimate the camera pose
             R, T, s = roma.rigid_points_registration(pred_j, ref_j, weights=self._weight_j[j], compute_scaling=True)
             self._set_pose(self.pw_poses, e, R, T, s)
+
+        ### initialize the optimized frame pose and depth map from the pair-wise prediction.
+        # average to get the initial optimized frame prediction.
+        pw_poses = self.get_pw_poses()
+        aligned_pred_i = geotrf(pw_poses, self._stacked_pred_pts_i)
+        # average by weights (note that weight is used by `log`)
+        confidence = self._weight_i.exp().unsqueeze(-1)
+        avg_points = torch.sum(aligned_pred_i * confidence, dim=0) / torch.sum(confidence, dim=0)
+
+        # from the avg_points to initialize the camera pose and depth
+        # points, focal, mask, device
+        pnp_points = avg_points.view(self.H, self.W, 3)
+        pnp_focal = float(self.known_intrinsics[0]) # f,f,cx,cy
+        pnp_pp = torch.tensor([self.known_intrinsics[2], self.known_intrinsics[3]], device=self.device) # cx, cy
+        mean_conf = torch.mean(confidence, dim=0).squeeze()
+        pnp_mask = mean_conf > min(3.0, mean_conf.median()); pnp_mask=pnp_mask.view(self.H, self.W)
+        res = fast_pnp(pnp_points, pnp_focal, pp=pnp_pp, msk=pnp_mask, device=self.device, niter_PnP=10)
+        _, cam2world = res # camer-to-world (matrix)
+        # set the pose to initialize the optimized pose and depth
+        # DEBUG
+        self.opt_pose.data[0:4] = roma.rotmat_to_unitquat(cam2world[:3, :3])
+        self.opt_pose.data[4:7] = signed_log1p(cam2world[:3, 3])
+        depth = geotrf(inv(cam2world), pnp_points)[..., 2]
+        self.opt_depths.data[:] = depth.log().ravel().nan_to_num(neginf=0)
+
+        return
 
     @property
     def n_edges(self):
@@ -371,12 +400,17 @@ class LocalBA(nn.Module):
 
         #### --------debug-------- ####
         """
-        points0 = fixed_pts3d[4].clone().detach().cpu().numpy()
-        points1 = aligned_pred_j[4].clone().detach().cpu().numpy()
-        rr.log("world/points0", rr.Points3D(points0))
-        rr.log("world/points1", rr.Points3D(points1))
-        rr.set_time_sequence("#frame", self.rr_iter)
-        self.rr_iter += 1
+        pcd_all = o3d.geometry.PointCloud()
+        for i in range(len(pts3d)):
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(pts3d[i].clone().detach().cpu().numpy())
+            pcd.paint_uniform_color([np.random.rand(), np.random.rand(), np.random.rand()])
+            pcd_all += pcd
+        o3d.visualization.draw_geometries([pcd_all])
+        # rr.log("world/points0", rr.Points3D(points0))
+        # rr.log("world/points1", rr.Points3D(points1))
+        # rr.set_time_sequence("#frame", self.rr_iter)
+        # self.rr_iter += 1
         """
         #### --------debug-------- ####
 
