@@ -38,7 +38,7 @@ class DepthVideo:
         self.inps = torch.zeros(buffer, 128, ht//8, wd//8, dtype=torch.half, device="cuda").share_memory_()
 
         # initialize poses to identity transformation
-        self.poses[:] = torch.as_tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float, device="cuda")
+        self.poses[:] = torch.as_tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float, device="cuda") # NOTE: world2camera
 
     def get_lock(self):
         return self.counter.get_lock()

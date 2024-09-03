@@ -130,6 +130,7 @@ class DroidFrontend:
             # sychronize the depth and pose to the DROID
             opt_depth = F.interpolate(opt_depth[None][None], scale_factor=1/self.RES, mode='bilinear').squeeze()
             self.video.disps[self.t1 - 1] = 1.0 / opt_depth
+            self.video.disps_sens[self.t1 - 1] = 1.0 / opt_depth
             # NOTE: the droid pose is world2camera, while the mast3r pose is camera2world
             droid_opt_pose = SE3(opt_pose).inv().data
             self.video.poses[self.t1 - 1] = droid_opt_pose
@@ -153,7 +154,6 @@ class DroidFrontend:
             o3d.visualization.draw_geometries([pcd_all])
             """
 
-            """
             # DBUEG: visualize the final optimized point cloud
             _poses = SE3(self.video.poses[mast3r_t0:mast3r_t1]).inv().data
             _depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
@@ -163,7 +163,7 @@ class DroidFrontend:
                 _points = points[i].cpu().numpy().reshape(-1, 3)
                 # clip the depths of _points to 3*median
                 _median = np.median(_points[:,2])
-                mask = _points[:,2] < 5 * _median
+                mask = _points[:,2] < 2 * _median
                 _points = _points[mask]
                 _pcd = o3d.geometry.PointCloud()
                 _pcd.points = o3d.utility.Vector3dVector(_points)
@@ -172,7 +172,9 @@ class DroidFrontend:
                 _pcd.colors = o3d.utility.Vector3dVector(_color)
                 pcd_all += _pcd
             o3d.visualization.draw_geometries([pcd_all])
-            """
+
+            # update the keyframe index
+            self.mast3r_keyframe = self.mast3r_keyframe + 1
 
         else: # error frames
             raise ValueError("Invalid keyframe index")
@@ -293,6 +295,9 @@ class DroidFrontend:
             # MAST3R-SLAM: based on DROID keyframes
             if self.mast3r_pred:
                 self.__mast3r_update()
+                # use the initialized new frames to do some optimization
+                # for _ in range(self.iters1):
+                #     self.graph.update(None, None, use_inactive=True)
 
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)

@@ -456,7 +456,14 @@ def mast3r_inference(images, cam_poses, inv_depths, RES, intrinsics, model, devi
 
     #TODO: clean the point cloud, for those depths larger than 2xmedian, make them 2xmedian
     for i in range(N_images):
-        depths[i] = depths[i].clamp(0, 3 * depths[i].median())
+        depths[i] = depths[i].clamp(0, 2 * depths[i].median())
+
+    """
+    pcd = o3d.geometry.PointCloud()
+    points = droid_backends.iproj(SE3(cam_poses).inv().data, 1/depths, intrinsics)[-1].detach().cpu().numpy().reshape(-1, 3)
+    pcd.points = o3d.utility.Vector3dVector(points)
+    o3d.visualization.draw_geometries([pcd])
+    """
 
     with torch.enable_grad():
         scene = LocalBA(cam_poses, depths, out, intrinsics, device=device).to(device)
