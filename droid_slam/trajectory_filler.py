@@ -13,7 +13,7 @@ class PoseTrajectoryFiller:
     """ This class is used to fill in non-keyframe poses """
 
     def __init__(self, net, video, device="cuda:0"):
-        
+
         # split net modules
         self.cnet = net.cnet
         self.fnet = net.fnet
@@ -26,7 +26,7 @@ class PoseTrajectoryFiller:
         # mean, std for image normalization
         self.MEAN = torch.as_tensor([0.485, 0.456, 0.406], device=self.device)[:, None, None]
         self.STDV = torch.as_tensor([0.229, 0.224, 0.225], device=self.device)[:, None, None]
-        
+
     @torch.cuda.amp.autocast(enabled=True)
     def __feature_encoder(self, image):
         """ features for correlation volume """
@@ -39,7 +39,7 @@ class PoseTrajectoryFiller:
         images = torch.stack(images, 0)
         intrinsics = torch.stack(intrinsics, 0)
         inputs = images[:,:,[2,1,0]].to(self.device) / 255.0
-        
+
         ### linear pose interpolation ###
         N = self.video.counter.value
         M = len(tstamps)
@@ -70,7 +70,7 @@ class PoseTrajectoryFiller:
 
         for itr in range(6):
             graph.update(N, N+M, motion_only=True)
-    
+
         Gs = SE3(self.video.poses[N:N+M].clone())
         self.video.counter.value -= M
 
@@ -86,7 +86,7 @@ class PoseTrajectoryFiller:
         tstamps = []
         images = []
         intrinsics = []
-        
+
         for (tstamp, image, intrinsic) in image_stream:
             tstamps.append(tstamp)
             images.append(image)

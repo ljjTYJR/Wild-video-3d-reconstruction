@@ -106,6 +106,52 @@ class DroidFrontend:
         # update visualization
         self.video.dirty[self.graph.ii.min():self.t1] = True
 
+    def ___motion_only_ba_detection(self, motion_only_window = 10):
+        """ based on the local map, run the motion-only bundle adjustment to estimate the new keyframe based on the distacne """
+
+        self.count += 1
+        self.t1 += 1
+
+        """ construct a new factor graph just for the motion-only bundle adjustment """
+        # the new frame is with the index of t1-1 (t1 always sychronize with the video.counter.value)
+        local_graph = FactorGraph(self.video, self.update_op)
+        # add factors in the graph, use all previous frames or latest M frames.
+        # the latest frame index is `t1-1`
+        i_start = max(self.t1 - motion_only_window - 1, 0)
+        i_end = self.t1 - 1 #arange: [start, end)
+        # TODO: is the ii-jj correct?
+        local_graph.add_factors(torch.arange(i_start, i_end).cuda(), torch.tensor([self.t1-1]).cuda().repeat(i_end-i_start))
+
+        for _ in range(6):
+            # only the frame of t1-1 is optimized, and only motion is considered
+            local_graph.update(self.t1-1, self.t1, motion_only=True)
+
+        # set initial pose for next frame
+        # TODO: check whether the distance changes or not
+        d = self.video.distance([self.t1-2], [self.t1-1], beta=self.beta, bidirectional=True)
+
+        if d.item() < self.keyframe_thresh:
+            # TODO
+            # remove the t1-1 frame in the video
+            with self.video.get_lock():
+                # not chosen as the keyframe
+                self.video.counter.value -= 1
+                self.t1 -= 1
+        else:
+            # choose as the keyframe
+            # TODO: do the dust3r-based refinement
+            # for itr in range(self.iters2):
+            #     self.graph.update(None, None, use_inactive=True)
+            pass
+        """
+        # set pose for next itration
+        self.video.poses[self.t1] = self.video.poses[self.t1-1]
+        self.video.disps[self.t1] = self.video.disps[self.t1-1].mean()
+
+        # update visualization
+        self.video.dirty[self.graph.ii.min():self.t1] = True
+        """
+
     def __mast3r_update(self):
         """ Run the Mast3R-facilicated SLAM pipeline """
         # first, is there new keyframe coming in? # TODO: now, the keyframe control is based on the DROID strategy
@@ -129,6 +175,7 @@ class DroidFrontend:
             opt_pose = scene.get_opt_pose_droid
             # sychronize the depth and pose to the DROID
             opt_depth = F.interpolate(opt_depth[None][None], scale_factor=1/self.RES, mode='bilinear').squeeze()
+            # TODO: Do we need to initialize the disps? We only need to feed the disps_sens.
             self.video.disps[self.t1 - 1] = 1.0 / opt_depth
             self.video.disps_sens[self.t1 - 1] = 1.0 / opt_depth
             # NOTE: the droid pose is world2camera, while the mast3r pose is camera2world
@@ -155,6 +202,7 @@ class DroidFrontend:
             """
 
             # DBUEG: visualize the final optimized point cloud
+            """
             _poses = SE3(self.video.poses[mast3r_t0:mast3r_t1]).inv().data
             _depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
             points = droid_backends.iproj(_poses, _depths, self.video.intrinsics[0])
@@ -172,6 +220,7 @@ class DroidFrontend:
                 _pcd.colors = o3d.utility.Vector3dVector(_color)
                 pcd_all += _pcd
             o3d.visualization.draw_geometries([pcd_all])
+            """
 
             # update the keyframe index
             self.mast3r_keyframe = self.mast3r_keyframe + 1
@@ -289,7 +338,8 @@ class DroidFrontend:
 
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
-            # DROID-SLAM
+            # DROID-SLAM: motion-only bundle adjustment to detect the new keyframe
+            # self.___motion_only_ba_detection()
             self.__update()
 
             # MAST3R-SLAM: based on DROID keyframes
