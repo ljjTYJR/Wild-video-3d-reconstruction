@@ -5,6 +5,22 @@ from lietorch import SE3
 import rerun as rr
 import cv2
 
+def get_current_color_points(video):
+    t0 = 0
+    t1 = video.counter.value
+    dirty_index = torch.arange(t0, t1).cuda().long()
+
+    poses = torch.index_select(video.poses, 0, dirty_index)
+    disps = torch.index_select(video.disps, 0, dirty_index)
+
+    points = droid_backends.iproj(SE3(poses).inv().data, disps, video.intrinsics[0]).cpu()
+
+    images_original = torch.index_select(video.images, 0, dirty_index).cpu()
+    images = images_original[:,[2,1,0],3::8,3::8].permute(0,2,3,1) / 255.0
+    points = points.reshape(-1, 3)
+    colors = images.reshape(-1, 3)
+    return points, colors
+
 class RerunVisualizer:
     def __init__(self, video):
         self.video = video

@@ -5,9 +5,9 @@ import numpy as np
 from lietorch import SE3
 from factor_graph import FactorGraph
 
-import rerun as rr
 import droid_backends
 
+from droid_slam.rerun_visualizer import get_current_color_points
 from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
 from mast3r.model import AsymmetricMASt3R
 from mast3r.inference import mast3r_inference_init, mast3r_inference
@@ -16,7 +16,7 @@ from droid_utils import droid_transform
 
 import open3d as o3d
 class DroidFrontend:
-    def __init__(self, net, video, args):
+    def __init__(self, net, video, vis, args):
         self.video = video
         self.update_op = net.update
         self.graph = FactorGraph(video, net.update, max_factors=48, upsample=args.upsample)
@@ -60,11 +60,7 @@ class DroidFrontend:
         self.mast3r_keyframe = 0
 
         # visualizer
-        if args.rerun:
-            from rerun_visualizer import RerunVisualizer
-            self.rr_vis = RerunVisualizer(self.video)
-        else:
-            self.rr_vis = None
+        self.rr_vis = vis
 
     def __update(self):
         """ add edges, perform update """
@@ -105,6 +101,49 @@ class DroidFrontend:
 
         # update visualization
         self.video.dirty[self.graph.ii.min():self.t1] = True
+
+    def __droid_refine(self):
+        """ add edges, perform update """
+
+        if self.graph.corr is not None:
+            self.graph.rm_factors(self.graph.age > self.max_age, store=True)
+
+        self.graph.add_proximity_factors(self.t1-5, max(self.t1-self.frontend_window, 0),
+            rad=self.frontend_radius, nms=self.frontend_nms, thresh=self.frontend_thresh, beta=self.beta, remove=True)
+
+        self.video.disps[self.t1-1] = torch.where(self.video.disps_sens[self.t1-1] > 0,
+           self.video.disps_sens[self.t1-1], self.video.disps[self.t1-1]) # if true, select disps_sens, otherwise disps # initialize the new frame
+
+        for itr in range(self.iters1):
+            self.graph.update(None, None, use_inactive=True)
+
+        # set pose for next itration
+        self.video.poses[self.t1] = self.video.poses[self.t1-1]
+        self.video.disps[self.t1] = self.video.disps[self.t1-1].mean()
+
+        # update visualization
+        self.video.dirty[self.graph.ii.min():self.t1] = True
+
+        ### -------- DEBUG --------
+        # debug: visualize the optimized point cloud
+        """
+        _poses = SE3(self.video.poses[:self.t1]).inv().data
+        _depths = self.video.disps[:self.t1].clone()
+        points = droid_backends.iproj(_poses, _depths, self.video.intrinsics[0])
+        pcd_all = o3d.geometry.PointCloud()
+        for i in range(len(points)):
+            _points = points[i].cpu().numpy().reshape(-1, 3)
+            # clip the depths of _points to 3*median
+            _points = _points
+            _pcd = o3d.geometry.PointCloud()
+            _pcd.points = o3d.utility.Vector3dVector(_points)
+            _color = self.video.images[i][[2,1,0], 3::8,3::8].cpu().numpy().transpose(1,2,0) / 255.0
+            _color = _color.reshape(-1,3)
+            _pcd.colors = o3d.utility.Vector3dVector(_color)
+            pcd_all += _pcd
+        o3d.visualization.draw_geometries([pcd_all])
+        """
+        ###
 
     def ___motion_only_ba_detection(self, motion_only_window = 10):
         """ based on the local map, run the motion-only bundle adjustment to estimate the new keyframe based on the distacne """
@@ -174,7 +213,7 @@ class DroidFrontend:
             # sychronize the depth and pose to the DROID
             opt_depth = F.interpolate(opt_depth[None][None], scale_factor=1/self.RES, mode='bilinear').squeeze()
             # TODO: Do we need to initialize the disps? We only need to feed the disps_sens.
-            self.video.disps[self.t1 - 1] = 1.0 / opt_depth
+            # self.video.disps[self.t1 - 1] = 1.0 / opt_depth
             self.video.disps_sens[self.t1 - 1] = 1.0 / opt_depth
             # NOTE: the droid pose is world2camera, while the mast3r pose is camera2world
             droid_opt_pose = SE3(opt_pose).inv().data
@@ -222,6 +261,9 @@ class DroidFrontend:
             # update the keyframe index
             self.mast3r_keyframe = self.mast3r_keyframe + 1
 
+            # TODO: better organize the code
+            self.__droid_refine()
+
         else: # error frames
             raise ValueError("Invalid keyframe index")
 
@@ -252,6 +294,7 @@ class DroidFrontend:
             depths = scene['depths'][None]
             depths = F.interpolate(depths, scale_factor=1/self.RES, mode='bilinear').squeeze()
             # feed the depths into the video frames
+            # DEBUG: not initialize the disps
             self.video.disps_sens[:self.t1] = torch.where(depths > 0, 1.0/depths, depths)
 
         for itr in range(8):
@@ -259,15 +302,17 @@ class DroidFrontend:
 
         self.graph.add_proximity_factors(0, 0, rad=2, nms=2, thresh=self.frontend_thresh, remove=False)
 
+        rr_iter = 0
         for itr in range(8):
             self.graph.update(1, use_inactive=True)
             if self.rr_vis is not None:
-                self.rr_vis(True, True, True, True, itr)
+                self.rr_vis(True, True, True, True, rr_iter)
+                rr_iter += 1
 
         # 1. visualize the DROID optimized point cloud
-        """
         # DEBUG: up-sample the generated depth map and compared to initial mast3r prediction.
         # 1. the DROID optimized point cloud
+        """
         droid_depths = (1 / self.video.disps[:self.t1].clone())[None]
         droid_depths = F.interpolate(droid_depths, scale_factor=self.RES, mode='bilinear').squeeze()
         droid_depths = 1 / droid_depths
@@ -283,6 +328,7 @@ class DroidFrontend:
             pcd_droid += pcd_tmp
         o3d.visualization.draw_geometries([pcd_droid])
         """
+
         # 2. the Mast3R optimized point cloud
         """
         mast3r_poses = scene['poses'].cpu().numpy() # (N,4,4)
@@ -317,14 +363,7 @@ class DroidFrontend:
             self.video.dirty[:self.t1] = True
 
         self.graph.rm_factors(self.graph.ii < self.warmup-4, store=True)
-
-        # for the mast3r SLAM pipeline, initialize the mast3r window
-        # in fact, these are shared across the mast3r and droid, we do not need to maintain two copies
-        # but we can choose to run which (in case of no memory)
-        if self.mast3r_pred:
-            for i in range(self.t1):
-                self.mast3r_window_depths[i] = scene['depths'][i].clone()
-            self.mast3r_keyframe = self.t1
+        self.mast3r_keyframe = self.t1
 
     def __call__(self):
         """ main update """
@@ -336,15 +375,13 @@ class DroidFrontend:
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
             # DROID-SLAM: motion-only bundle adjustment to detect the new keyframe
-            self.___motion_only_ba_detection()
-            # self.__update()
 
             # MAST3R-SLAM: based on DROID keyframes
             if self.mast3r_pred:
+                self.___motion_only_ba_detection()
                 self.__mast3r_update()
-                # use the initialized new frames to do some optimization
-                # for _ in range(self.iters1):
-                #     self.graph.update(None, None, use_inactive=True)
+            else:
+                self.__update()
 
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)

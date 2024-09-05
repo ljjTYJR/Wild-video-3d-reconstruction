@@ -23,14 +23,21 @@ class Droid:
         # store images, depth, poses, intrinsics (shared between processes)
         self.video = DepthVideo(args.image_size, args.buffer, stereo=args.stereo)
 
+         # visualizer
+        if args.rerun:
+            from rerun_visualizer import RerunVisualizer
+            self.rr_vis = RerunVisualizer(self.video)
+        else:
+            self.rr_vis = None
+
         # filter incoming frames so that there is enough motion
         self.filterx = MotionFilter(self.net, self.video, thresh=args.filter_thresh, mast3r_pred=args.mast3r_pred)
 
         # frontend process
-        self.frontend = DroidFrontend(self.net, self.video, self.args)
+        self.frontend = DroidFrontend(self.net, self.video, self.rr_vis, self.args)
 
         # backend process
-        self.backend = DroidBackend(self.net, self.video, self.args)
+        self.backend = DroidBackend(self.net, self.video, self.rr_vis, self.args)
 
         # visualizer
         if not self.disable_vis:
@@ -84,6 +91,8 @@ class Droid:
         print("#" * 32)
         self.backend(12)
 
-        camera_trajectory = self.traj_filler(stream)
-        return camera_trajectory.inv().data.cpu().numpy()
+        # visualize the final global BA result
+
+        # camera_trajectory = self.traj_filler(stream)
+        # return camera_trajectory.inv().data.cpu().numpy()
 
