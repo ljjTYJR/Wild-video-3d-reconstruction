@@ -33,6 +33,8 @@ class RerunVisualizer:
         self.camera_label = 'world/camera'
         self.image_label = 'world/image'
 
+        self.filter_thresh = 0.005
+
     def __call__(self, point, path, camera, image, frame_n=None):
         t0 = 0
         t1 = self.video.counter.value
@@ -55,6 +57,17 @@ class RerunVisualizer:
             images = images_original[:,[2,1,0],3::8,3::8].permute(0,2,3,1) / 255.0
             points = points.reshape(-1, 3)
             colors = images.reshape(-1, 3)
+
+            # filter out the outlier points
+            thresh = self.filter_thresh * torch.ones_like(disps.mean(dim=[1,2]))
+            count = droid_backends.depth_filter(
+                self.video.poses, self.video.disps, self.video.intrinsics[0], dirty_index, thresh)
+            count = count.cpu()
+            disps = disps.cpu()
+            masks = ((count >= 2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True))).reshape(-1)
+            points = points[masks]
+            colors = colors[masks]
+
             rr.log(self.point_label,
                    rr.Points3D(points, colors=colors))
 
