@@ -42,8 +42,10 @@ class DroidFrontend:
         self.frontend_radius = args.frontend_radius
 
         self.use_gt_calib = True if args.calib is not None else False
+
         # Mast3R related settings
         self.mast3r_pred = args.mast3r_pred
+        self.mast3r_init_only = args.mast3r_init_only
         self.mast3r_batch_size=1
         self.mast3r_schedule='cosine'
         self.mast3r_lr=0.01
@@ -290,6 +292,12 @@ class DroidFrontend:
             # feed the depths into the video frames
             # DEBUG: not initialize the disps
             self.video.disps_sens[:self.t1] = torch.where(depths > 0, 1.0/depths, depths)
+
+            if self.mast3r_init_only:
+                # delete the mode to reduce the memory usage
+                del self.mast3r_model
+                self.mast3r_model = None
+                torch.cuda.empty_cache()
 
         self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 

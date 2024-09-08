@@ -117,6 +117,7 @@ if __name__ == '__main__':
     parser.add_argument("--upsample", action="store_true")
     parser.add_argument("--reconstruction_path", help="path to saved reconstruction")
     parser.add_argument("--mast3r_pred", action="store_true")
+    parser.add_argument("--mast3r_init_only", action="store_true")
     parser.add_argument("--rerun", action="store_true")
     args = parser.parse_args()
 
