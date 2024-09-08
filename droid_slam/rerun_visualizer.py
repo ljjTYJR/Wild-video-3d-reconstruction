@@ -51,7 +51,7 @@ class RerunVisualizer:
             rr.set_time_sequence("#frame", t1)
         if point is True:
 
-            points = droid_backends.iproj(SE3(poses).inv().data, disps, self.video.intrinsics[0]).cpu()
+            points = droid_backends.iproj(SE3(poses).inv().data, disps, self.video.intrinsics[0]).cpu() # it is the intrinsic after the RES
 
             images_original = torch.index_select(self.video.images, 0, dirty_index).cpu()
             images = images_original[:,[2,1,0],3::8,3::8].permute(0,2,3,1) / 255.0

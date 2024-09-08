@@ -73,7 +73,7 @@ class MotionFilter:
             corr = CorrBlock(self.fmap[None,[0]], gmap[None,[0]])(coords0)
 
             # approximate flow magnitude using 1 update iteration
-            _, delta, weight = self.update(self.net[None], self.inp[None], corr)
+            _, delta, weight = self.update(self.net[None], self.inp[None], corr) # I think it just compare the same pixel's flow, to remove static frames
 
             # check motion magnitue / add new frame to video
             if delta.norm(dim=-1).mean().item() > self.thresh:

@@ -13,6 +13,7 @@ from mast3r.model import AsymmetricMASt3R
 from mast3r.inference import mast3r_inference_init, mast3r_inference
 import torch.nn.functional as F
 from droid_utils import droid_transform
+import roma
 
 import open3d as o3d
 class DroidFrontend:
@@ -281,20 +282,27 @@ class DroidFrontend:
             with torch.no_grad():
                 # NOTE: the current inference is just aligned with the first frame using 3D-3D correspondence
                 # TODO: use the Dust3R / 2D-2D correspondence to refine the result
-                scene = mast3r_inference_init(self.mast3r_image_buffer, self.mast3r_model, 'cuda')
+                scene = mast3r_inference_init(self.mast3r_image_buffer, self.mast3r_model, 'cuda') # on the device of the cuda.
             # prepare the intrinsic parameters
             focals = scene['focals']; cx = self.video.wd / 2; cy = self.video.ht / 2
             avg_focal = focals.mean().item()
+            # initialize with the estimated camera poses
+            cam2world = scene['poses']; world2cam = cam2world.inverse()
+                #matrix -> quaternion + translation
+            quats = roma.rotmat_to_unitquat(world2cam[:, :3, :3]) # (x,y,z,w)
+            trans = world2cam[:, :3, 3] # (x,y,z), in the droid, the poses are (xyz, xyzw)
+            mast3r_world2cam = torch.cat((trans, quats), dim=1)
+            self.video.poses[:self.t1] = mast3r_world2cam
+
             self.video.intrinsics[:self.t1] = torch.tensor([avg_focal, avg_focal, cx, cy]).cuda() / self.RES
             # prepare the predicted depths
-            depths = scene['depths'][None]
-            depths = F.interpolate(depths, scale_factor=1/self.RES, mode='bilinear').squeeze()
+            mast3r_depths = scene['depths'][None]
+            mast3r_depths = F.interpolate(mast3r_depths, scale_factor=1/self.RES, mode='bilinear').squeeze()
             # feed the depths into the video frames
-            # DEBUG: not initialize the disps
-            self.video.disps_sens[:self.t1] = torch.where(depths > 0, 1.0/depths, depths)
+            self.video.disps_sens[:self.t1] = torch.where(mast3r_depths > 0, 1.0/mast3r_depths, 0)
 
             if self.mast3r_init_only:
-                # delete the mode to reduce the memory usage
+                # delete the model to reduce the memory usage
                 del self.mast3r_model
                 self.mast3r_model = None
                 torch.cuda.empty_cache()
