@@ -176,22 +176,15 @@ class DroidFrontend:
                 self.video.counter.value -= 1
                 self.t1 -= 1
         else:
-            # Select a new keyframe, feed them into the dust3r and then output the new optimized keyframe
+            # set pose for next itration
+            self.video.poses[self.t1] = self.video.poses[self.t1-1]
+            self.video.disps[self.t1] = self.video.disps[self.t1-1].mean()
 
-            # for itr in range(self.iters2):
-            #     self.graph.update(None, None, use_inactive=True)
-            return
-        """
-        # set pose for next itration
-        self.video.poses[self.t1] = self.video.poses[self.t1-1]
-        self.video.disps[self.t1] = self.video.disps[self.t1-1].mean()
+            # update visualization
+            self.video.dirty[self.graph.ii.min():self.t1] = True
 
-        # update visualization
-        self.video.dirty[self.graph.ii.min():self.t1] = True
-        """
-
-    def __mast3r_update(self):
-        """ Run the Mast3R-facilicated SLAM pipeline """
+    def __mast3r_update0(self):
+        """ This the the original mast3r update optimization, use the mast3r as the initialization, not used now. """
         # first, is there new keyframe coming in? # TODO: now, the keyframe control is based on the DROID strategy
         if self.mast3r_keyframe == self.t1: # No new keyframe
             return
@@ -274,8 +267,6 @@ class DroidFrontend:
         self.t0 = 0
         self.t1 = self.video.counter.value
 
-        self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
-
         if self.use_gt_calib and self.mast3r_pred:
             raise ValueError("Error: choose one of the calibration method")
         ### use the Mast3R for prediction
@@ -299,6 +290,8 @@ class DroidFrontend:
             # feed the depths into the video frames
             # DEBUG: not initialize the disps
             self.video.disps_sens[:self.t1] = torch.where(depths > 0, 1.0/depths, depths)
+
+        self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 
         for itr in range(8):
             self.graph.update(1, use_inactive=True)
@@ -377,10 +370,11 @@ class DroidFrontend:
 
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
-            # if self.mast3r_pred:
+            if self.mast3r_pred:
                 # self.___motion_only_ba_detection()
-                # self.__mast3r_update()
-            self.__update()
+                self.__update()
+            else:
+                self.__update()
 
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)

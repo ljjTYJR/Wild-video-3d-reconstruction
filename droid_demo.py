@@ -66,7 +66,7 @@ def image_stream(imagedir, calib, stride):
 
             yield t, image[None], intrinsics
         else:
-            yield t, image[None], None
+            yield t, image[None], torch.zeros(4)
 
 
 def save_reconstruction(droid, reconstruction_path):
