@@ -41,6 +41,7 @@ class DroidFrontend:
         self.frontend_thresh = args.frontend_thresh
         self.frontend_radius = args.frontend_radius
 
+        self.use_gt_calib = True if args.calib is not None else False
         # Mast3R related settings
         self.mast3r_pred = args.mast3r_pred
         self.mast3r_batch_size=1
@@ -275,6 +276,8 @@ class DroidFrontend:
 
         self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 
+        if self.use_gt_calib and self.mast3r_pred:
+            raise ValueError("Error: choose one of the calibration method")
         ### use the Mast3R for prediction
         if self.mast3r_pred:
             # push in images
@@ -374,14 +377,10 @@ class DroidFrontend:
 
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
-            # DROID-SLAM: motion-only bundle adjustment to detect the new keyframe
-
-            # MAST3R-SLAM: based on DROID keyframes
-            if self.mast3r_pred:
-                self.___motion_only_ba_detection()
-                self.__mast3r_update()
-            else:
-                self.__update()
+            # if self.mast3r_pred:
+                # self.___motion_only_ba_detection()
+                # self.__mast3r_update()
+            self.__update()
 
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)

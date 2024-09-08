@@ -24,7 +24,7 @@ from mast3r.model import AsymmetricMASt3R
 from mast3r.inference import mast3r_inference
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False):
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False):
         self.cfg = cfg
         self.load_weights(network)
         self.is_initialized = False
@@ -102,7 +102,7 @@ class DPVO:
             rr.set_time_sequence("#frame", 0)
 
         # Add the Dust3R model for inference
-        self.mast3r_est=False
+        self.mast3r_est=True if mast3r else False
         self.mast3r_batch_size=1
         self.mast3r_schedule='cosine'
         self.mast3r_lr=0.01

@@ -22,7 +22,7 @@ def show_image(image, t=0):
     cv2.waitKey(t)
 
 @torch.no_grad()
-def run(cfg, network, imagedir, calib, stride=1, skip=0, viz=False, timeit=False, save_reconstruction=False):
+def run(cfg, network, imagedir, calib, stride=1, skip=0, viz=False, timeit=False, save_reconstruction=False, mast3r=False):
 
     slam = None
     queue = Queue(maxsize=8)
@@ -42,7 +42,7 @@ def run(cfg, network, imagedir, calib, stride=1, skip=0, viz=False, timeit=False
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r)
 
         image = image.cuda()
         intrinsics = intrinsics.cuda()
@@ -76,6 +76,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip', type=int, default=0) # a good thing, which can be used for debugging
     parser.add_argument('--buffer', type=int, default=1024)
     parser.add_argument('--config', default="dpvo_configs/default.yaml")
+    parser.add_argument('--mast3r', action="store_true")
     parser.add_argument('--timeit', action='store_true')
     parser.add_argument('--viz', action="store_true")
     parser.add_argument('--plot', action="store_true")
@@ -89,7 +90,8 @@ if __name__ == '__main__':
     print("Running with config...")
     print(cfg)
 
-    pred_traj = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction)
+    pred_traj = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
+                    args.mast3r)
     name = Path(args.imagedir).stem
 
     if args.save_reconstruction:
