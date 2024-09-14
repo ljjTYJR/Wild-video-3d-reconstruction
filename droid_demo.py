@@ -1,5 +1,6 @@
 import sys
 sys.path.append('droid_slam')
+sys.path.append('mast3r_slam')
 
 from tqdm import tqdm
 import numpy as np
@@ -13,6 +14,7 @@ import argparse
 
 from torch.multiprocessing import Process
 from droid import Droid
+from mast3r_slam import Mast3rSlam
 
 import torch.nn.functional as F
 
@@ -95,9 +97,9 @@ if __name__ == '__main__':
     parser.add_argument("--imagedir", type=str, help="path to image directory")
     parser.add_argument("--calib", type=str, help="path to calibration file")
     parser.add_argument("--t0", default=0, type=int, help="starting frame")
-    parser.add_argument("--stride", default=3, type=int, help="frame stride")
+    parser.add_argument("--stride", default=1, type=int, help="frame stride")
 
-    parser.add_argument("--weights", default="droid.pth")
+    parser.add_argument("--droid_weights", default="checkpoints/droid.pth")
     parser.add_argument("--buffer", type=int, default=512)
     parser.add_argument("--image_size", default=[240, 320])
     parser.add_argument("--disable_vis", action="store_true")
@@ -118,13 +120,16 @@ if __name__ == '__main__':
     parser.add_argument("--reconstruction_path", help="path to saved reconstruction")
     parser.add_argument("--mast3r_pred", action="store_true")
     parser.add_argument("--mast3r_init_only", action="store_true")
+    parser.add_argument("--mast3r_slam_only", action="store_true") # whether to use DROID or not
+    parser.add_argument("--mast3r_weights", default="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth") # whether to use DROID or not
     parser.add_argument("--rerun", action="store_true")
     args = parser.parse_args()
 
     args.stereo = False
     torch.multiprocessing.set_start_method('spawn')
 
-    droid = None
+    droid_slam = None
+    mast3r_slam = None
 
     # need high resolution depths
     if args.reconstruction_path is not None:
@@ -138,13 +143,21 @@ if __name__ == '__main__':
         if not args.disable_vis:
             show_image(image[0])
 
-        if droid is None:
-            args.image_size = [image.shape[2], image.shape[3]]
-            droid = Droid(args)
+        # choose which slam system we will use, the droid(optical flow) or the mast3r. First, we only use one of them
+        if not args.mast3r_slam_only:
+            if droid_slam is None:
+                args.image_size = [image.shape[2], image.shape[3]]
+                droid_slam = Droid(args)
 
-        droid.track(t, image, intrinsics=intrinsics)
+            droid_slam.track(t, image, intrinsics=intrinsics)
+        else:
+            # use the mast3r-based SLAM only
+            if mast3r_slam is None:
+                args.image_size = [image.shape[2], image.shape[3]]
+                mast3r_slam = Mast3rSlam(args)
+            mast3r_slam.track(t, image, intrinsics=intrinsics)
 
-    if args.reconstruction_path is not None:
-        save_reconstruction(droid, args.reconstruction_path)
+    # if args.reconstruction_path is not None:
+    #     save_reconstruction(droid_slam, args.reconstruction_path)
 
-    traj_est = droid.terminate(image_stream(args.imagedir, args.calib, args.stride))
+    # traj_est = droid_slam.terminate(image_stream(args.imagedir, args.calib, args.stride))

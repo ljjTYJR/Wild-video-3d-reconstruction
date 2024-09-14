@@ -16,7 +16,7 @@ from torch.multiprocessing import Process
 class Droid:
     def __init__(self, args):
         super(Droid, self).__init__()
-        self.load_weights(args.weights)
+        self.load_weights(args.droid_weights)
         self.args = args
         self.disable_vis = args.disable_vis
 
