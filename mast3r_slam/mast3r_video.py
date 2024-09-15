@@ -10,7 +10,7 @@ class Mast3rVideo:
 
         ### state attributes ###
         self.tstamp = torch.zeros(buffer, device="cuda", dtype=torch.float)
-        self.images = torch.zeros(buffer, 3, ht, wd, device="cuda", dtype=torch.uint8)
+        self.images = torch.zeros(buffer, 3, ht, wd, device="cuda", dtype=torch.uint8) # to cuda?
         self.poses = torch.zeros(buffer, 7, device="cuda", dtype=torch.float)
         # different from the DROID which down-sample with the factor of 8, we use the original size
         self.disps = torch.ones(buffer, ht, wd, device="cuda", dtype=torch.float)

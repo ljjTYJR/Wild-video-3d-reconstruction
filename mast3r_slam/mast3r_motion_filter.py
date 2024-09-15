@@ -11,11 +11,23 @@ from droid_net import DroidNet
 import geom.projective_ops as pops
 from modules.corr import CorrBlock
 
+# SEA-RAFT related optical flow estimation
+def sea_raft_optical_flow(image1, image2, sea_raft):
+    # image from BGR to RGB
+    image1 = image1[[2, 1, 0], :, :][None]
+    image2 = image2[[2, 1, 0], :, :][None]
+    if image1.device != image2.device:
+        image1 = image1.to('cuda')
+        image2 = image2.to('cuda')
+    output = sea_raft(image1, image2, iters=4, test_mode=True)
+    flow_final = output['flow'][-1]
+    info_final = output['info'][-1]
+    return flow_final, info_final
 
 class Mast3rMotionFilter:
     """ This class is used to filter incoming frames and extract features """
 
-    def __init__(self, net, video, thresh=2.5, mast3r_pred=False, device="cuda:0"):
+    def __init__(self, net, sea_raft, video, thresh=2.5, mast3r_pred=False, device="cuda:0"):
 
         # split net modules
         self.cnet = net.cnet
@@ -34,6 +46,7 @@ class Mast3rMotionFilter:
 
         # whether to use the mast3r prediction
         self.mast3r_pred = mast3r_pred
+        self.seq_raft = sea_raft
 
     @torch.cuda.amp.autocast(enabled=True)
     def __context_encoder(self, image):
@@ -77,6 +90,10 @@ class Mast3rMotionFilter:
 
             # approximate flow magnitude using 1 update iteration
             _, delta, weight = self.update(self.net[None], self.inp[None], corr) # I think it just compare the same pixel's flow, to remove static frames
+
+            # sea-raft optical flow
+            if self.seq_raft is not None:
+                sea_raft_flow, _ = sea_raft_optical_flow(image[0], self.video.images[-1], self.seq_raft)
 
             # check motion magnitue / add new frame to video
             if delta.norm(dim=-1).mean().item() > self.thresh:

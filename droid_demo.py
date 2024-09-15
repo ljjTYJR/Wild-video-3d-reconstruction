@@ -123,6 +123,9 @@ if __name__ == '__main__':
     parser.add_argument("--mast3r_slam_only", action="store_true") # whether to use DROID or not
     parser.add_argument("--mast3r_weights", default="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth") # whether to use DROID or not
     parser.add_argument("--rerun", action="store_true")
+
+    # parser.add_argument("--sea_rafts_weights", default="checkpoints/Tartan-C-T-TSKH-spring540x960-M.pth")
+    parser.add_argument("--sea_rafts_weights", default=None)
     args = parser.parse_args()
 
     args.stereo = False

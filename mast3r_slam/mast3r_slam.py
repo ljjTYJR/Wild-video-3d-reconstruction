@@ -4,6 +4,7 @@ import numpy as np
 
 import sys
 sys.path.append('../droid_slam')
+# sys.path.append('sea_raft')
 
 from collections import OrderedDict
 from torch.multiprocessing import Process
@@ -12,25 +13,31 @@ from mast3r.model import AsymmetricMASt3R
 from mast3r_video import Mast3rVideo
 from mast3r_motion_filter import Mast3rMotionFilter
 
+# DROID_SLAM
 from droid_net import DroidNet
+
+# SEA-RAFT
+from sea_raft.raft import RAFT
+from sea_raft.utils.utils import load_ckpt
 
 class Mast3rSlam:
     def __init__(self, args):
         super(Mast3rSlam, self).__init__()
-        self.load_weights(args.mast3r_weights, args.droid_weights)
+        self.load_weights(args.mast3r_weights, args.droid_weights, args.sea_rafts_weights)
         self.args = args
 
         self.video = Mast3rVideo(args.image_size, args.buffer)
 
-        self.filterx = Mast3rMotionFilter(self.droid_net, self.video, thresh=args.filter_thresh)
+        self.filterx = Mast3rMotionFilter(self.droid_net, self.sea_raft, self.video, thresh=args.filter_thresh)
 
-    def load_weights(self, mast3r_weights, droid_weights=None):
+    def load_weights(self, mast3r_weights, droid_weights=None, sea_rafts=None):
         """
         load trained model weights,
         """
-        self.mast3r_net = AsymmetricMASt3R.from_pretrained(mast3r_weights).to('cuda').eval()
+        # self.mast3r_net = AsymmetricMASt3R.from_pretrained(mast3r_weights).to('cuda').eval()
 
         self.droid_net = None
+        self.sea_raft = None
         if droid_weights is not None: # for optical flow estimation
             self.droid_net = DroidNet()
             state_dict = OrderedDict([
@@ -43,6 +50,12 @@ class Mast3rSlam:
 
             self.droid_net.load_state_dict(state_dict)
             self.droid_net.to("cuda:0").eval()
+        if sea_rafts is not None:
+            # load the sea-raft weights
+            self.sea_raft = RAFT()
+            load_ckpt(self.sea_raft, sea_rafts)
+            self.sea_raft = self.sea_raft.to('cuda:0')
+            self.sea_raft.eval()
 
     def track(self, tstamp, image, depth=None, intrinsics=None):
         """ The Mast3r SLAM main thread """
