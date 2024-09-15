@@ -31,7 +31,10 @@ Use the [Mast3R model](https://github.com/naver/mast3r) and [DROID-SLAM](https:/
 - [ ] Use the `GeoCalib` to estimate the camera intrinsic parameters.
 - [ ] Run the local SFM based on the Mast3R and align them using the Two-view geometry.
 
+# Not very important
+- [ ] Compare the dust3r-based optimization and the mast3r-based optimization (seems that not all points will be used to optimized or just patch-wise optimization)
 - [ ] Understand the optical flow update operator
+- [ ] In addition to the dense optical flow, we can also use the sparse correspondence to estimate the optical flow (like the superpoint, etc.)
 
 # Notes
 - In the Mast3R optimized point cloud, there is distoration in the optimized points (which might be a problem). This can come from the incorrect intrinsics

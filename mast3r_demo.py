@@ -20,7 +20,7 @@ if __name__ == '__main__':
     # images = load_images(['dust3r/croco/assets/Chateau1.png', 'dust3r/croco/assets/Chateau2.png'], size=512)
     images = load_images(['/home/shuo/Desktop/droid_init/image_0.jpg',
                           '/home/shuo/Desktop/droid_init/image_45.jpg',
-                          ], size=512, scale=0.75)
+                          ], size=512, scale=None)
     # images = load_images(['/media/shuo/T7/sfm_sequences/sequence1/0000.jpg', '/media/shuo/T7/sfm_sequences/sequence1/0020.jpg'], size=512)
     output = inference([tuple(images)], model, device, batch_size=1, verbose=False)
 

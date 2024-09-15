@@ -12,6 +12,7 @@ from torch.multiprocessing import Process
 from mast3r.model import AsymmetricMASt3R
 from mast3r_video import Mast3rVideo
 from mast3r_motion_filter import Mast3rMotionFilter
+from mast3r_frontend import Mast3rFrontend
 
 # DROID_SLAM
 from droid_net import DroidNet
@@ -30,11 +31,13 @@ class Mast3rSlam:
 
         self.filterx = Mast3rMotionFilter(self.droid_net, self.sea_raft, self.video, thresh=args.filter_thresh)
 
+        self.mast3r_frontend = Mast3rFrontend(self.mast3r_net, self.video)
+
     def load_weights(self, mast3r_weights, droid_weights=None, sea_rafts=None):
         """
         load trained model weights,
         """
-        # self.mast3r_net = AsymmetricMASt3R.from_pretrained(mast3r_weights).to('cuda').eval()
+        self.mast3r_net = AsymmetricMASt3R.from_pretrained(mast3r_weights).to('cuda').eval()
 
         self.droid_net = None
         self.sea_raft = None
@@ -64,7 +67,7 @@ class Mast3rSlam:
         self.filterx.track(tstamp, image, depth, intrinsics)
 
         # do the local BA for local reconstruction
-        # self.frontend()
+        self.mast3r_frontend()
 
 
     def terminate(self, stream=None):

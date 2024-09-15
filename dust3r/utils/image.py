@@ -129,3 +129,10 @@ def load_images(folder_or_list, size, square_ok=False, verbose=True, scale=None)
     if verbose:
         print(f' (Found {len(imgs)} images)')
     return imgs
+
+def format_images(images):
+    """ Convert the images array to the dust3r-needed format; By default, the images should be reszie to 512 """
+    # to RGB order, to correspond to the code `img = exif_transpose(PIL.Image.open(os.path.join(root, path))).convert('RGB')`
+    images = images[:, [2, 1, 0], :, :]
+    # TODO: construct the dust3r format
+    pass
