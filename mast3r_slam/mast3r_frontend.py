@@ -9,6 +9,8 @@
 from dust3r.utils.image import load_images, format_images, format_mast3r_out
 from dust3r.image_pairs import make_pairs
 from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference
+from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
+from dust3r.utils.device import to_numpy
 
 class Mast3rFrontend:
     def __init__(self, mast3r_model, video):
@@ -19,8 +21,12 @@ class Mast3rFrontend:
         self.count = 0
         self.warmup = 8
         self.ba_window = 8
-        # local ba setting
 
+        # local ba setting
+        self.niter = 200
+        self.lr = 0.01
+        self.schedule = 'cosine'
+        self.batch_size = 1
 
         self.is_initialized = False
 
@@ -31,10 +37,9 @@ class Mast3rFrontend:
         pairs = make_pairs(images, scene_graph='complete', prefilter='seq3', symmetrize=False)
         out = paris_asymmetric_inference(pairs, self.mast3r_model, self.device)
         res = format_mast3r_out(pairs, out)
-        # get the prediction
-        view1, pred1 = res['view1'], res['pred1']
-        view2, pred2 = res['view2'], res['pred2']
-        # TODO: the global 3D bundle adjustment
+        scene = global_aligner(res, device=self.device, mode=GlobalAlignerMode.PointCloudOptimizer)
+        loss = scene.compute_global_alignment(init="mst", niter=self.niter, schedule=self.schedule, lr=self.lr)
+
         self.is_initialized = True
 
     def __track__(self):

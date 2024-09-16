@@ -161,7 +161,7 @@ def format_mast3r_out(pairs, out):
         'conf': torch.cat([val[0]['conf'] for key, val in out.items()], dim=0),
     }
     res['pred2'] = {
-        'pts3d': torch.cat([val[1]['pts3d'] for key, val in out.items()], dim=0),
+        'pts3d_in_other_view': torch.cat([val[1]['pts3d'] for key, val in out.items()], dim=0),
         'conf': torch.cat([val[1]['conf'] for key, val in out.items()], dim=0),
     }
     return res
