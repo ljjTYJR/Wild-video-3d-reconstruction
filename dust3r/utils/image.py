@@ -134,5 +134,34 @@ def format_images(images):
     """ Convert the images array to the dust3r-needed format; By default, the images should be reszie to 512 """
     # to RGB order, to correspond to the code `img = exif_transpose(PIL.Image.open(os.path.join(root, path))).convert('RGB')`
     images = images[:, [2, 1, 0], :, :]
-    # TODO: construct the dust3r format
-    pass
+    imgs = []
+    for i, image in enumerate(images):
+        img = ImgNorm(image.permute(1,2,0).cpu().numpy())[None]
+        imgs.append(dict(img=img, true_shape=np.int32([img.shape[2:]]), idx=i, instance=str(i)))
+    return imgs
+
+def format_mast3r_out(pairs, out):
+    """ format the direct output prediction from the mast3r model for BundelAdjustment usage """
+    res = dict()
+    # view1 are the meta data from the first view; tensor/tensor/list/list
+    res['view1'] = {
+        'img': torch.cat([x[0]['img'] for x in pairs], dim=0),
+        'true_shape': torch.cat([torch.from_numpy(x[0]['true_shape']) for x in pairs], dim=0),
+        'idx' : [x[0]['idx'] for x in pairs],
+        'instance' : [x[0]['instance'] for x in pairs]
+    }
+    res['view2'] = {
+        'img': torch.cat([x[1]['img'] for x in pairs], dim=0),
+        'true_shape': torch.cat([torch.from_numpy(x[1]['true_shape']) for x in pairs], dim=0),
+        'idx' : [x[1]['idx'] for x in pairs],
+        'instance' : [x[1]['instance'] for x in pairs]
+    }
+    res['pred1'] = {
+        'pts3d': torch.cat([val[0]['pts3d'] for key, val in out.items()], dim=0),
+        'conf': torch.cat([val[0]['conf'] for key, val in out.items()], dim=0),
+    }
+    res['pred2'] = {
+        'pts3d': torch.cat([val[1]['pts3d'] for key, val in out.items()], dim=0),
+        'conf': torch.cat([val[1]['conf'] for key, val in out.items()], dim=0),
+    }
+    return res

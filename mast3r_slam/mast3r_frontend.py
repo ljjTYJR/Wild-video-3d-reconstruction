@@ -6,10 +6,13 @@
 # @ Author: Shuo Sun
 ##
 
-from dust3r.utils.image import load_images, format_images
+from dust3r.utils.image import load_images, format_images, format_mast3r_out
+from dust3r.image_pairs import make_pairs
+from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference
 
 class Mast3rFrontend:
     def __init__(self, mast3r_model, video):
+        self.device='cuda:0'
         self.mast3r_model = mast3r_model
         self.video = video
 
@@ -24,12 +27,14 @@ class Mast3rFrontend:
     def __initialize__(self):
         """ Initialize the frontend; After the initialization, we will fix the intrinsic for following tracking; also, the scale. """
         initial_images = self.video.images[:self.ba_window]
-        # make the image mast3r/dust3r-support format
         images = format_images(initial_images)
-
-        # do the 3D BA
-
-        # export the needed parameters
+        pairs = make_pairs(images, scene_graph='complete', prefilter='seq3', symmetrize=False)
+        out = paris_asymmetric_inference(pairs, self.mast3r_model, self.device)
+        res = format_mast3r_out(pairs, out)
+        # get the prediction
+        view1, pred1 = res['view1'], res['pred1']
+        view2, pred2 = res['view2'], res['pred2']
+        # TODO: the global 3D bundle adjustment
         self.is_initialized = True
 
     def __track__(self):
