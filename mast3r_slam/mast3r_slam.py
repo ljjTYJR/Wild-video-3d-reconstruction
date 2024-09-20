@@ -64,11 +64,11 @@ class Mast3rSlam:
         """ The Mast3r SLAM main thread """
 
         # the optical flow estimation to select the keyframe
-        self.filterx.track(tstamp, image, depth, intrinsics)
+        track = self.filterx.track(tstamp, image, depth, intrinsics)
 
         # do the local BA for local reconstruction
-        self.mast3r_frontend()
-
+        if track:
+            self.mast3r_frontend()
 
     def terminate(self, stream=None):
         pass

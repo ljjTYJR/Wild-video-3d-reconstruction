@@ -81,6 +81,7 @@ class Mast3rMotionFilter:
             self.net, self.inp, self.fmap = net, inp, gmap
             # The initialization, no need to add
             self.video.append(tstamp, image[0], Id, 1.0, intrinsics / 8.0)
+            return True
 
         ### only add new frame if there is enough motion ###
         else:
@@ -103,5 +104,7 @@ class Mast3rMotionFilter:
                 # for the following frames, the intrinsic will be set as the first frame
                 intrinsics = self.video.intrinsics[0].clone()
                 self.video.append(tstamp, image[0], None, None, intrinsics)
+                return True
             else:
                 self.count += 1
+                return False

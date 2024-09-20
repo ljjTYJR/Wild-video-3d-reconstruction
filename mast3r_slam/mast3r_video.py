@@ -11,10 +11,10 @@ class Mast3rVideo:
         ### state attributes ###
         self.tstamp = torch.zeros(buffer, device="cuda", dtype=torch.float)
         self.images = torch.zeros(buffer, 3, ht, wd, device="cuda", dtype=torch.uint8) # to cuda?
-        self.poses = torch.zeros(buffer, 7, device="cuda", dtype=torch.float)
+        self.poses = torch.zeros(buffer, 7, device="cuda", dtype=torch.float)          # world2camera transformation
         # different from the DROID which down-sample with the factor of 8, we use the original size
         self.disps = torch.ones(buffer, ht, wd, device="cuda", dtype=torch.float)
-        self.intrinsics = torch.zeros(buffer, 4, device="cuda", dtype=torch.float)
+        self.intrinsics = torch.zeros(buffer, 4, device="cuda", dtype=torch.float) # fx, fy, cx, cy
 
         ### feature attributes ###
         c = 1
@@ -27,6 +27,8 @@ class Mast3rVideo:
 
         # the bundle adjustment setting
         self.ba_window = 8 # After collecting 8 frames, do BA
+
+        self.poses[:] = torch.as_tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float, device="cuda") # translation + quaternion (xyzw)
 
     def __item_setter(self, index, item):
         if isinstance(index, int) and index >= self.counter.value:
