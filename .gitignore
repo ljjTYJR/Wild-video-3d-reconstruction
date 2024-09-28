@@ -159,3 +159,5 @@ figures/*.pdf
 # custom setting
 test.py
 tmp/
+
+thirdparty/
