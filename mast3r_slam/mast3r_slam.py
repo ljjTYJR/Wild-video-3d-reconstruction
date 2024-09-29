@@ -16,6 +16,9 @@ from mast3r_frontend import Mast3rFrontend
 
 # DROID_SLAM
 from droid_net import DroidNet
+import os
+from lietorch import SE3
+import droid_backends
 
 # SEA-RAFT
 from sea_raft.raft import RAFT
@@ -72,3 +75,17 @@ class Mast3rSlam:
 
     def terminate(self, stream=None):
         pass
+
+    def save_trajectory(self, path):
+        if not os.path.isdir(path):
+            os.makedirs(path)
+        # save the trajectory.
+        counter = self.video.counter.value
+
+        poses = self.video.poses[:counter].detach().cpu().numpy() # camera2world
+
+        depths = self.video.disps[:counter].detach().cpu().numpy() # note that the inverse depths
+
+        intrinsics = self.video.intrinsics[:counter].detach().cpu().numpy()
+
+        np.savez(os.path.join(path, 'mast3r_trajectory.npz'), poses=poses, depths=depths, intrinsics=intrinsics)

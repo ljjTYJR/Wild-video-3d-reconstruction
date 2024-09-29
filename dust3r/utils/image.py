@@ -133,6 +133,8 @@ def load_images(folder_or_list, size, square_ok=False, verbose=True, scale=None)
 def format_images(images):
     """ Convert the images array to the dust3r-needed format; By default, the images should be reszie to 512 """
     # to RGB order, to correspond to the code `img = exif_transpose(PIL.Image.open(os.path.join(root, path))).convert('RGB')`
+    if isinstance(images, list):
+        images = torch.stack(images, dim=0)
     images = images[:, [2, 1, 0], :, :]
     imgs = []
     for i, image in enumerate(images):

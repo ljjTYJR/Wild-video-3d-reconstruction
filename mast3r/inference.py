@@ -19,6 +19,8 @@ from dust3r.optim_factory import adjust_learning_rate_by_lr
 from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference, paris_symmetric_inference
 from mast3r.fast_nn import fast_reciprocal_NNs_sample
 from mast3r.usage import rigid_points_registration
+from dust3r.utils.image import format_images, format_mast3r_out
+from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 
 import droid_backends
 from lietorch import SE3
@@ -503,4 +505,17 @@ def mast3r_inference(images, cam_poses, inv_depths, RES, intrinsics, model, devi
         scene = LocalBA(cam_poses, depths, out, intrinsics, device=device).to(device)
         # construct the optimizer and do the optimization loop
         global_alignment_loop(scene)
+    return scene
+
+def local_dust3r_ba(images, model, scene_graph='complete', prefilter='seq3', symmetrize=False, device='cuda',
+                     niter=200, schedule='cosine', lr=0.01):
+    """
+    The dust3r-like local bundle adjustment, use the dust3r model to predict the 3d points and then optimize the camera poses and depths.
+    """
+    images = format_images(images)
+    pairs = make_pairs(images, scene_graph=scene_graph, prefilter=prefilter, symmetrize=symmetrize)
+    out = paris_asymmetric_inference(pairs, model, device)
+    res = format_mast3r_out(pairs, out)
+    scene = global_aligner(res, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
+    loss = scene.compute_global_alignment(init="mst", niter=niter, schedule=schedule, lr=lr)
     return scene

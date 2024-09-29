@@ -30,6 +30,8 @@ Use the [Mast3R model](https://github.com/naver/mast3r) and [DROID-SLAM](https:/
   - For a rotation-only scene, it is difficult to estimate or refine the camera intrinsic. It also has some requirements for the recorded scene.
 - [ ] Use the `GeoCalib` to estimate the camera intrinsic parameters.
 - [ ] Run the local SFM based on the Mast3R and align them using the Two-view geometry.
+- [ ] Run the batch BA to refine the pose and the scene when merge two separate models;
+- [ ] Add the dynamic object detection
 
 # Not very important
 - [ ] Compare the dust3r-based optimization and the mast3r-based optimization (seems that not all points will be used to optimized or just patch-wise optimization)

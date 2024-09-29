@@ -16,12 +16,13 @@ import rerun as rr
 
 from dust3r.inference import load_model
 from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
+from mast3r.model import AsymmetricMASt3R
+from mast3r.inference import local_dust3r_ba
+
+from pycolmap_pipeline import pycolmap_pipeline
 
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
-
-from mast3r.model import AsymmetricMASt3R
-from mast3r.inference import mast3r_inference
 
 class DPVO:
     def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False):
@@ -49,7 +50,7 @@ class DPVO:
         self.image_ = torch.zeros(self.ht, self.wd, 3, dtype=torch.uint8, device="cpu")
 
         self.tstamps_ = torch.zeros(self.N, dtype=torch.long, device="cuda")
-        self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda")
+        self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda") # world to camera
         self.patches_ = torch.zeros(self.N, self.M, 3, self.P, self.P, dtype=torch.float, device="cuda")
         self.intrinsics_ = torch.zeros(self.N, 4, dtype=torch.float, device="cuda")
 
@@ -94,6 +95,8 @@ class DPVO:
         if viz:
             self.start_viewer()
 
+        self.warm_up = 10
+
         # re-run visualization
         self.rr = True
         if self.rr:
@@ -103,10 +106,6 @@ class DPVO:
 
         # Add the Dust3R model for inference
         self.mast3r_est=True if mast3r else False
-        self.mast3r_batch_size=1
-        self.mast3r_schedule='cosine'
-        self.mast3r_lr=0.01
-        self.opt_iter=300
         self.mast3r_model_path="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
         if self.mast3r_est:
             self.mast3r_model=AsymmetricMASt3R.from_pretrained(self.mast3r_model_path).to('cuda').eval()
@@ -370,7 +369,7 @@ class DPVO:
         with Timer("other", enabled=self.enable_timing):
             coords = self.reproject() # [B, N, 2, p, p] which indicates the corresponding tracks, it can be implemented by the pycolmap with mast3r initialization
 
-            with autocast(enabled=True):
+            with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
                 ctx = self.imap[:,self.kk % (self.M * self.mem)]
                 self.net, (delta, weight, _) = \
@@ -476,16 +475,10 @@ class DPVO:
 
         self.counter += 1
         if self.n > 0 and not self.is_initialized:
-            if self.motion_probe() < 2.0:
+            # if self.motion_probe() < 2.0:
+            if self.motion_probe() < 1.0:
                 self.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
-
-        # EXPERIMENT: create the failure case.
-        # if self.n > 100 and self.is_initialized:
-        #     if self.n % 100 != 0:
-        #         return
-        #     else:
-        #         print("Creating a new camera tracking, the frame id is ", self.n)
 
         self.n += 1
         self.m += self.M
@@ -494,47 +487,41 @@ class DPVO:
         self.append_factors(*self.__edges_forw()) # connect previous patches to the current new frame
         self.append_factors(*self.__edges_back())
 
-        # append images to the mast3r buffer
         if not self.is_initialized and self.mast3r_est:
-            mast3r_img = set_as_dust3r_image(self.image_.clone(), len(self.mast3r_image_buffer))
-            self.mast3r_image_buffer.append(mast3r_img)
+            self.mast3r_image_buffer.append(self.image_.clone())
 
-        if self.n == 8 and not self.is_initialized:
+        # if self.n == 8 and not self.is_initialized:
+        if self.n == self.warm_up and not self.is_initialized:
             self.is_initialized = True
 
             # optimize and get the estimated intrinsic parameters
-            if len(self.mast3r_image_buffer) == 8:
+            if len(self.mast3r_image_buffer) == self.warm_up:
                 with torch.enable_grad():
-                    # TODO: get the correct
-                    scene = mast3r_inference(self.mast3r_image_buffer, self.mast3r_model, 'cuda')
-
-            ### update the intrinsics
+                    scene = local_dust3r_ba(self.mast3r_image_buffer, self.mast3r_model)
             # focal, cx and cy are half of the original image size
             if self.mast3r_est:
-                focals = scene['focals']; cx = self.wd / 2; cy = self.ht / 2
-                avg_focal = torch.mean(focals)
-                for i in range(8):
-                    self.intrinsics_[i, 0] = avg_focal / self.RES
-                    self.intrinsics_[i, 1] = avg_focal / self.RES
-                    self.intrinsics_[i, 2] = cx / self.RES
-                    self.intrinsics_[i, 3] = cy / self.RES
-                # interpolate the depth map to 1/4 of original resolution
-                depths = scene['depths'][None]
-                depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
-                # initialize the path depth with the mast3r depth map
-                for idx in range(len(depths)):
-                    patch = self.patches_[idx].clone()
-                    depth = depths[idx]
-                    N, _, W_patch, H_patch = patch.shape
-                    for i in range(N):
-                        x_coords = patch[i, 0, :, :].long()
-                        y_coords = patch[i, 1, :, :].long()
-                        x_coords = torch.clamp(x_coords, 0, depth.shape[1] - 1)
-                        y_coords = torch.clamp(y_coords, 0, depth.shape[0] - 1)
-                        extracted_depths = depth[y_coords, x_coords]
-                        median_depth = torch.median(extracted_depths)
-                        patch[i, 2, :, :] = 1/median_depth # NOTE: we use the inverse depth
-                    self.patches_[idx] = patch
+                avg_intrinsics = scene.get_intrinsics().mean(dim=0)
+                depths = torch.stack(scene.get_depthmaps(raw=False), dim=0)
+                mast3r_intrinsics = torch.tensor([avg_intrinsics[0, 0], avg_intrinsics[0, 0],
+                                                  avg_intrinsics[0, 2], avg_intrinsics[1, 2]], device='cuda') \
+                                                / self.RES
+                self.intrinsics_[:self.warm_up] = mast3r_intrinsics
+
+                # depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
+                # # initialize the path depth with the mast3r depth map
+                # for idx in range(len(depths)):
+                #     patch = self.patches_[idx].clone()
+                #     depth = depths[idx]
+                #     N, _, W_patch, H_patch = patch.shape
+                #     for i in range(N):
+                #         x_coords = patch[i, 0, :, :].long()
+                #         y_coords = patch[i, 1, :, :].long()
+                #         x_coords = torch.clamp(x_coords, 0, depth.shape[1] - 1)
+                #         y_coords = torch.clamp(y_coords, 0, depth.shape[0] - 1)
+                #         extracted_depths = depth[y_coords, x_coords]
+                #         median_depth = torch.median(extracted_depths)
+                #         patch[i, 2, :, :] = 1/median_depth # NOTE: we use the inverse depth
+                #     self.patches_[idx] = patch
             for itr in range(12):
                 if self.rr:
                     self.rr_register_info(itr)
@@ -545,3 +532,12 @@ class DPVO:
             self.keyframe()
             if self.rr:
                 self.rr_register_info()
+
+# NOTE: current not used
+# def prepare_colmap_data(dpvo, idx0, idx1):
+#     """ Prepare the coarse DPVO-BA result data for the COLMAP refinement """
+#     extrinsics = SE3(dpvo.poses_[idx0:idx1]).inv().matrix().cpu().numpy() # camera to world
+
+#     _intrinsic = dpvo.intrinsics_[0].cpu().numpy() * dpvo.RES
+#     _intrinsic = np.array([[_intrinsic[0], 0, _intrinsic[2]], [0, _intrinsic[1], _intrinsic[3]], [0, 0, 1]])
+#     intrinsic = np.tile(_intrinsic[None], (idx1 - idx0, 1, 1))

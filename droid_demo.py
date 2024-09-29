@@ -160,6 +160,14 @@ if __name__ == '__main__':
                 mast3r_slam = Mast3rSlam(args)
             mast3r_slam.track(t, image, intrinsics=intrinsics)
 
+    # save the result
+    if droid_slam is not None:
+        """ Todo: save the trajectory result """
+        pass
+    if mast3r_slam is not None:
+        """ Save the trajectory result """
+        mast3r_slam.save_trajectory('output')
+
     # if args.reconstruction_path is not None:
     #     save_reconstruction(droid_slam, args.reconstruction_path)
 

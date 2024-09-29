@@ -72,8 +72,8 @@ if __name__ == '__main__':
     parser.add_argument('--network', type=str, default='checkpoints/dpvo.pth')
     parser.add_argument('--imagedir', type=str)
     parser.add_argument('--calib', type=str)
-    parser.add_argument('--stride', type=int, default=2)
-    parser.add_argument('--skip', type=int, default=0) # a good thing, which can be used for debugging
+    parser.add_argument('--stride', type=int, default=1)
+    parser.add_argument('--skip', type=int, default=0)
     parser.add_argument('--buffer', type=int, default=1024)
     parser.add_argument('--config', default="dpvo_configs/default.yaml")
     parser.add_argument('--mast3r', action="store_true")

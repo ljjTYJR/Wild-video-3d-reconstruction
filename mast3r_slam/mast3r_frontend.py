@@ -217,12 +217,11 @@ class Mast3rFrontend:
         # align two model(or, the trajectory)
         self.align_two_traj(window_start)
 
-        poses = SE3(self.video.poses[:window_end]).inv().data
-        disps = self.video.disps[:window_end]
-        intrinsics = self.video.intrinsics[:window_end][0]
-        pts = droid_backends.iproj(poses, disps, intrinsics)
-        mast3r_o3d_vis_group_points(pts)
-        pass
+        # poses = SE3(self.video.poses[:window_end]).inv().data
+        # disps = self.video.disps[:window_end]
+        # intrinsics = self.video.intrinsics[:window_end][0]
+        # pts = droid_backends.iproj(poses, disps, intrinsics)
+        # mast3r_o3d_vis_group_points(pts)
 
     def __call__(self):
         """ The main thread of the frontend """
