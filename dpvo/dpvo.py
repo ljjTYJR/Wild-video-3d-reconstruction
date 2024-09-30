@@ -25,7 +25,7 @@ autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False):
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False, all_frames=False):
         self.cfg = cfg
         self.load_weights(network)
         self.is_initialized = False
@@ -113,39 +113,48 @@ class DPVO:
             self.mast3r_model=None
         self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
 
-    def rr_register_info(self, frame_n=None, point_label='world/points', path_label='world/path', camera_label='world/cameras', image_label='world/image'):
+        self.all_frames=all_frames
+
+    def rr_register_info(self,
+        frame_n=None,
+        point_label='world/points',
+        path_label='world/path',
+        camera_label='world/cameras',
+        image_label='world/image'):
         if frame_n is not None:
             rr.set_time_sequence("#frame", frame_n)
         else:
             rr.set_time_sequence("#frame", self.n)
-        scale=100.0
-        'points should be Nx3 type'
+
+        scale = 100.0
         n_f = self.n * self.M
-        points = self.points_[:n_f]
-        points = points.cpu().numpy() if points.is_cuda else points
-        colors = self.colors_.view(-1, 3)[:n_f]
-        colors = colors.cpu().numpy() if colors.is_cuda else colors
-        colors = colors * 255.0
-        points = points * scale # enlarge the scale for visualization
-        rr.log(point_label, rr.Points3D(points, colors=colors))
+
+        # Get points and colors, move to CPU and convert to numpy if needed
+        points = (self.points_[:n_f].cpu().numpy() if self.points_.is_cuda else self.points_[:n_f]) * scale
+        colors = (self.colors_.view(-1, 3)[:n_f].cpu().numpy() if self.colors_.is_cuda else self.colors_.view(-1, 3)[:n_f]) * 255.0
+
+        # Extract patches and compute mask
+        patches = self.patches_[:self.n][..., self.P // 2, self.P // 2]
+        med_by_frame = patches[:, :, 2].median(dim=1).values
+        mask = (patches[:, :, -1] > 0.5 * med_by_frame[:, None]).view(-1).cpu().numpy()
+
+        # Filter points and colors based on the mask
+        rr.log(point_label, rr.Points3D(points[mask], colors=colors[mask]))
 
         # register camera poses and visualize
         poses = SE3(self.poses_[:self.n])
         poses = poses.inv().data.cpu().numpy()
         translations = poses[:, :3] * scale
         rotations = poses[:, 3:]
-        rr.log(path_label, rr.LineStrips3D([translations], colors=[[255, 0, 0]]))
-
-        # register the pinhole cameras
-        rr.log(camera_label,
-               rr.Transform3D(translation=translations[-1], rotation=rr.Quaternion(xyzw=rotations[-1]), scale=0.00005)
-            )
+        # rr.log(path_label, rr.LineStrips3D([translations], colors=[[255, 0, 0]]))
 
         # log the images
         image = self.image_.cpu().numpy()
         image = np.transpose(image, (1, 2, 0))
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         rr.log(image_label, rr.Image(image))
+        rr.log(f"world/camera/{self.n}", rr.Pinhole(focal_length=float(self.intrinsics[0][0][0].cpu()), height=self.ht/self.RES, width=self.wd/self.RES))
+        rr.log(f"world/camera/{self.n}", rr.Transform3D(translation=translations[-1], rotation=rr.Quaternion(xyzw=rotations[-1]), scale=0.0050))
 
     def load_weights(self, network):
         # load network from checkpoint file
@@ -424,7 +433,7 @@ class DPVO:
         self.image_ = image
         image = 2 * (image[None,None] / 255.0) - 0.5
 
-        with autocast(enabled=self.cfg.MIXED_PRECISION):
+        with torch.amp.autocast('cuda', enabled=self.cfg.MIXED_PRECISION):
             fmap, gmap, imap, patches, _, clr = \
                 self.network.patchify(image,
                     patches_per_image=self.cfg.PATCHES_PER_FRAME,
@@ -475,8 +484,7 @@ class DPVO:
 
         self.counter += 1
         if self.n > 0 and not self.is_initialized:
-            # if self.motion_probe() < 2.0:
-            if self.motion_probe() < 1.0:
+            if self.motion_probe() < 2.0:
                 self.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
 
@@ -529,7 +537,8 @@ class DPVO:
 
         elif self.is_initialized:
             self.update()
-            self.keyframe()
+            if not self.all_frames:
+                self.keyframe()
             if self.rr:
                 self.rr_register_info()
 

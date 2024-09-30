@@ -22,7 +22,18 @@ def show_image(image, t=0):
     cv2.waitKey(t)
 
 @torch.no_grad()
-def run(cfg, network, imagedir, calib, stride=1, skip=0, viz=False, timeit=False, save_reconstruction=False, mast3r=False):
+def run(
+    cfg,
+    network,
+    imagedir,
+    calib,
+    stride=1,
+    skip=0,
+    viz=False,
+    timeit=False,
+    save_reconstruction=False,
+    mast3r=False,
+    all_frames=False):
 
     slam = None
     queue = Queue(maxsize=8)
@@ -42,7 +53,7 @@ def run(cfg, network, imagedir, calib, stride=1, skip=0, viz=False, timeit=False
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, all_frames=all_frames)
 
         image = image.cuda()
         intrinsics = intrinsics.cuda()
@@ -82,6 +93,8 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--save_reconstruction', action="store_true")
     parser.add_argument('--save_trajectory', action="store_true")
+    parser.add_argument('--all_frames', action="store_true") # use all frames
+    parser.add_argument('--export_colmap', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
@@ -91,7 +104,7 @@ if __name__ == '__main__':
     print(cfg)
 
     pred_traj = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-                    args.mast3r)
+                    args.mast3r, args.all_frames)
     name = Path(args.imagedir).stem
 
     if args.save_reconstruction:
