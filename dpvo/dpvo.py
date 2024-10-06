@@ -19,8 +19,6 @@ from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
 from mast3r.model import AsymmetricMASt3R
 from mast3r.inference import local_dust3r_ba
 
-from pycolmap_pipeline import pycolmap_pipeline
-
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
@@ -127,19 +125,9 @@ class DPVO:
             rr.set_time_sequence("#frame", self.n)
 
         scale = 100.0
-        n_f = self.n * self.M
-
-        # Get points and colors, move to CPU and convert to numpy if needed
-        points = (self.points_[:n_f].cpu().numpy() if self.points_.is_cuda else self.points_[:n_f]) * scale
-        colors = (self.colors_.view(-1, 3)[:n_f].cpu().numpy() if self.colors_.is_cuda else self.colors_.view(-1, 3)[:n_f]) * 255.0
-
-        # Extract patches and compute mask
-        patches = self.patches_[:self.n][..., self.P // 2, self.P // 2]
-        med_by_frame = patches[:, :, 2].median(dim=1).values
-        mask = (patches[:, :, -1] > 0.5 * med_by_frame[:, None]).view(-1).cpu().numpy()
-
-        # Filter points and colors based on the mask
-        rr.log(point_label, rr.Points3D(points[mask], colors=colors[mask]))
+        points, colors, _ = self.get_pts_clr_intri()
+        points = points * scale # for visualization
+        rr.log(point_label, rr.Points3D(points, colors=colors))
 
         # register camera poses and visualize
         poses = SE3(self.poses_[:self.n])
@@ -219,6 +207,20 @@ class DPVO:
     @property
     def gmap(self):
         return self.gmap_.view(1, self.mem * self.M, 128, 3, 3)
+
+    def get_pts_clr_intri(self):
+        # self.m is the number of patches; self.m = self.N * self.M
+        points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, self.ix[:self.m])
+        points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3).cpu().numpy()
+        colors = (self.colors_.view(-1, 3)[:self.m].cpu().numpy() if self.colors_.is_cuda else self.colors_.view(-1, 3)[:self.m]) * 255.0
+
+        patches = self.patches_[:self.n][..., self.P // 2, self.P // 2]
+        med_by_frame = patches[:, :, 2].median(dim=1).values
+        mask = (patches[:, :, -1] > 0.5 * med_by_frame[:, None]).view(-1).cpu().numpy()
+
+        intrinsic = self.intrinsics_[0].cpu().numpy() * self.RES
+        H, W = self.ht, self.wd
+        return points[mask], colors[mask], (intrinsic, H, W)
 
     def get_pose(self, t):
         if t in self.traj:
@@ -483,10 +485,11 @@ class DPVO:
         self.fmap2_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 4, 4)
 
         self.counter += 1
-        if self.n > 0 and not self.is_initialized:
-            if self.motion_probe() < 2.0:
-                self.delta[self.counter - 1] = (self.counter - 2, Id[0])
-                return
+        # DEBUG: use all frames during the SLAM
+        # if self.n > 0 and not self.is_initialized:
+            # if self.motion_probe() < 2.0:
+                # self.delta[self.counter - 1] = (self.counter - 2, Id[0])
+                # return
 
         self.n += 1
         self.m += self.M
@@ -534,6 +537,9 @@ class DPVO:
                 if self.rr:
                     self.rr_register_info(itr)
                 self.update()
+
+            del self.mast3r_image_buffer
+            del self.mast3r_model
 
         elif self.is_initialized:
             self.update()

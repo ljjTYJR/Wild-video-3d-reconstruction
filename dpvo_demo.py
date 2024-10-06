@@ -7,12 +7,15 @@ import torch
 from pathlib import Path
 from multiprocessing import Process, Queue
 from plyfile import PlyElement, PlyData
+from evo.core.trajectory import PoseTrajectory3D
+from loguru import logger
+import datetime
 
 from dpvo.utils import Timer
 from dpvo.dpvo import DPVO
 from dpvo.config import cfg
 from dpvo.stream import image_stream, video_stream
-from dpvo.plot_utils import plot_trajectory, save_trajectory_tum_format
+from dpvo.plot_utils import plot_trajectory, save_trajectory_tum_format, save_output_for_COLMAP
 
 SKIP = 0
 
@@ -74,12 +77,16 @@ def run(
         el = PlyElement.describe(points, 'vertex',{'some_property': 'f8'},{'some_property': 'u4'})
         return slam.terminate(), PlyData([el], text=True)
 
-    return slam.terminate()
+    points, colors, (intrinsic, H, W) = slam.get_pts_clr_intri()
+
+    # (poses, tstamps), (points, colors, (intrinsic, h, w))
+    return slam.terminate(), (points, colors, (*intrinsic, H, W))
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('--exp_name', type=str, default='dpvo')
     parser.add_argument('--network', type=str, default='checkpoints/dpvo.pth')
     parser.add_argument('--imagedir', type=str)
     parser.add_argument('--calib', type=str)
@@ -100,22 +107,36 @@ if __name__ == '__main__':
     cfg.merge_from_file(args.config)
     cfg.BUFFER_SIZE = args.buffer
 
-    print("Running with config...")
-    print(cfg)
+    # create the logging file
+    current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    exp_dir = Path(f"experiments/{args.exp_name}_{current_time}")
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    logger.add(f'{exp_dir}/exp.log',
+                format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}:{function}:{line} - {message}",
+                level="INFO")
 
-    pred_traj = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
+    print("Running with config...")
+    logger.info(cfg)
+
+    (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
                     args.mast3r, args.all_frames)
     name = Path(args.imagedir).stem
+    trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)
 
-    if args.save_reconstruction:
-        pred_traj, ply_data = pred_traj
-        ply_data.write(f"{name}.ply")
-        print(f"Saved {name}.ply")
+    # if args.save_reconstruction:
+    #     pred_traj, ply_data = pred_traj
+    #     ply_data.write(f"{name}.ply")
+    #     print(f"Saved {name}.ply")
 
-    if args.save_trajectory:
-        Path("saved_trajectories").mkdir(exist_ok=True)
-        save_trajectory_tum_format(pred_traj, f"saved_trajectories/{name}.txt")
+    # if args.save_trajectory:
+    #     Path("saved_trajectories").mkdir(exist_ok=True)
+    #     save_trajectory_tum_format(pred_traj, f"saved_trajectories/{name}.txt")
 
-    if args.plot:
-        Path("trajectory_plots").mkdir(exist_ok=True)
-        plot_trajectory(pred_traj, title=f"DPVO Trajectory Prediction for {name}", filename=f"trajectory_plots/{name}.pdf")
+    # if args.plot:
+    #     Path("trajectory_plots").mkdir(exist_ok=True)
+    #     plot_trajectory(pred_traj, title=f"DPVO Trajectory Prediction for {name}", filename=f"trajectory_plots/{name}.pdf")
+
+    if args.export_colmap:
+        path = (Path(args.imagedir).parent).joinpath("dpvo_colmap")
+        image_path = Path(args.imagedir)
+        save_output_for_COLMAP(path, trajectory, points, colors, True, *calib)

@@ -6,7 +6,8 @@ from evo.core import sync
 from evo.core.trajectory import PoseTrajectory3D
 from evo.tools import plot
 from pathlib import Path
-
+import os
+from loguru import logger
 
 def make_traj(args) -> PoseTrajectory3D:
     if isinstance(args, tuple):
@@ -50,3 +51,51 @@ def save_trajectory_tum_format(traj, filename):
         for i in range(traj.num_poses):
             f.write(f"{traj.timestamps[i]} {tostr(traj.positions_xyz[i])} {tostr(traj.orientations_quat_wxyz[i][[1,2,3,0]])}\n")
     print(f"Saved {filename}")
+
+def save_output_for_COLMAP(name: str, traj: PoseTrajectory3D, points: np.ndarray, colors: np.ndarray, nerf_studio_format, fx, fy, cx, cy, H=480, W=640):
+    """ Saves the sparse point cloud and camera poses such that it can be opened in COLMAP """
+
+    colmap_dir = Path(name)
+    colmap_dir.mkdir(exist_ok=True)
+    scale = 10 # for visualization
+
+    logger.info(f"Saving COLMAP-compatible reconstruction in {colmap_dir.resolve()}")
+
+    # images
+    images = ""
+    traj = PoseTrajectory3D(poses_se3=list(map(np.linalg.inv, traj.poses_se3)), timestamps=traj.timestamps)
+    for idx, (x,y,z), (qw, qx, qy, qz) in zip(range(1,traj.num_poses+1), traj.positions_xyz*scale, traj.orientations_quat_wxyz):
+        images += f"{idx} {qw} {qx} {qy} {qz} {x} {y} {z} 1\n\n"
+    (colmap_dir / "images.txt").write_text(images)
+
+    # points
+    points3D = ""
+    colors_uint = (colors * 255).astype(np.uint8).tolist()
+    for i, (p,c) in enumerate(zip((points*scale).tolist(), colors_uint), start=1):
+        points3D += f"{i} " + ' '.join(map(str, p + c)) + " 0.0 0 0 0 0 0 0\n"
+    (colmap_dir / "points3D.txt").write_text(points3D)
+
+    # camera
+    (colmap_dir / "cameras.txt").write_text(f"1 PINHOLE {W} {H} {fx} {fy} {cx} {cy}")
+
+    if nerf_studio_format:
+        nerf_studio_colmap_dir = colmap_dir / "colmap/sparse/0"
+        if os.path.exists(nerf_studio_colmap_dir):
+            os.system(f"rm -rf {nerf_studio_colmap_dir}/*")
+        else:
+            nerf_studio_colmap_dir.mkdir(parents=True, exist_ok=True)
+        cmd = f"colmap model_converter --input_path {colmap_dir} --output_path {nerf_studio_colmap_dir} --output_type BIN"
+        os.system(cmd)
+        logger.info(f"Saved COLMAP-compatible reconstruction in {nerf_studio_colmap_dir.resolve()}")
+
+        # link images
+        original_image_path = Path(name).parent.joinpath("images")
+        colmap_image_path = colmap_dir / "images"
+        if not os.path.exists(colmap_image_path):
+            # extfat does not support symlinks
+            # logger.info(f"Linked images from {original_image_path} to {colmap_image_path}")
+            # os.system(f"ln -s {original_image_path} {colmap_image_path}")
+            os.system(f"cp -r {original_image_path} {colmap_image_path}")
+            logger.info(f"Copied images from {original_image_path} to {colmap_image_path}")
+
+    print(f"Saved COLMAP-compatible reconstruction in {colmap_dir.resolve()}")
