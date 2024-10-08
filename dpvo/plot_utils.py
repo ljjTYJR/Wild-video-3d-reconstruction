@@ -60,7 +60,7 @@ def save_output_for_COLMAP(name: str, tstamp: np.ndarray, traj: PoseTrajectory3D
 
     colmap_dir = Path(name)
     colmap_dir.mkdir(exist_ok=True)
-    scale = 10 # for visualization
+    scale = 1.0 # for visualization
 
     logger.info(f"Saving COLMAP-compatible reconstruction in {colmap_dir.resolve()}")
 

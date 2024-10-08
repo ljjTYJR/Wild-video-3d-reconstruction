@@ -36,7 +36,7 @@ def run(
     timeit=False,
     save_reconstruction=False,
     mast3r=False,
-    all_frames=False):
+    motion_filter=False):
 
     slam = None
     queue = Queue(maxsize=8)
@@ -56,7 +56,7 @@ def run(
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, all_frames=all_frames)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, motion_filter=motion_filter)
 
         image = image.cuda()
         intrinsics = intrinsics.cuda()
@@ -100,7 +100,7 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--save_reconstruction', action="store_true")
     parser.add_argument('--save_trajectory', action="store_true")
-    parser.add_argument('--all_frames', action="store_true") # use all frames
+    parser.add_argument('--motion_filter', action="store_true")
     parser.add_argument('--export_colmap', action="store_true")
     args = parser.parse_args()
 
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     logger.info(cfg)
 
     (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-                    args.mast3r, args.all_frames)
+                    args.mast3r, args.motion_filter)
     name = Path(args.imagedir).stem
     trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)
 

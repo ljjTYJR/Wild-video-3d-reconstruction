@@ -23,7 +23,7 @@ autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False, all_frames=False):
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False, motion_filter=False):
         self.cfg = cfg
         self.load_weights(network)
         self.is_initialized = False
@@ -111,7 +111,7 @@ class DPVO:
             self.mast3r_model=None
         self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
 
-        self.all_frames=all_frames
+        self.motion_filter=motion_filter
 
     def rr_register_info(self,
         frame_n=None,
@@ -306,7 +306,7 @@ class DPVO:
         j = self.n - self.cfg.KEYFRAME_INDEX + 1
         m = self.motionmag(i, j) + self.motionmag(j, i)
 
-        if m / 2 < self.cfg.KEYFRAME_THRESH:
+        if m / 2 < self.cfg.KEYFRAME_THRESH and self.motion_filter:
             k = self.n - self.cfg.KEYFRAME_INDEX
             t0 = self.tstamps_[k-1].item()
             t1 = self.tstamps_[k].item()
@@ -485,11 +485,11 @@ class DPVO:
         self.fmap2_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 4, 4)
 
         self.counter += 1
-        # DEBUG: use all frames during the SLAM
-        # if self.n > 0 and not self.is_initialized:
-            # if self.motion_probe() < 2.0:
-                # self.delta[self.counter - 1] = (self.counter - 2, Id[0])
-                # return
+        # use enough initial motions for initialization
+        if self.n > 0 and not self.is_initialized:
+            if self.motion_probe() < 2.0:
+                self.delta[self.counter - 1] = (self.counter - 2, Id[0])
+                return
 
         self.n += 1
         self.m += self.M
@@ -543,8 +543,7 @@ class DPVO:
 
         elif self.is_initialized:
             self.update()
-            if not self.all_frames:
-                self.keyframe()
+            self.keyframe()
             if self.rr:
                 self.rr_register_info()
 
