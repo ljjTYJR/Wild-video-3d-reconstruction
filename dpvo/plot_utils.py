@@ -9,6 +9,9 @@ from pathlib import Path
 import os
 from loguru import logger
 
+from formatter.colmap_utilis import colmap_to_json
+from itertools import chain
+
 def make_traj(args) -> PoseTrajectory3D:
     if isinstance(args, tuple):
         traj, tstamps = args
@@ -52,7 +55,7 @@ def save_trajectory_tum_format(traj, filename):
             f.write(f"{traj.timestamps[i]} {tostr(traj.positions_xyz[i])} {tostr(traj.orientations_quat_wxyz[i][[1,2,3,0]])}\n")
     print(f"Saved {filename}")
 
-def save_output_for_COLMAP(name: str, traj: PoseTrajectory3D, points: np.ndarray, colors: np.ndarray, nerf_studio_format, fx, fy, cx, cy, H=480, W=640):
+def save_output_for_COLMAP(name: str, tstamp: np.ndarray, traj: PoseTrajectory3D, points: np.ndarray, colors: np.ndarray, nerf_studio_format, fx, fy, cx, cy, H=480, W=640):
     """ Saves the sparse point cloud and camera poses such that it can be opened in COLMAP """
 
     colmap_dir = Path(name)
@@ -61,11 +64,21 @@ def save_output_for_COLMAP(name: str, traj: PoseTrajectory3D, points: np.ndarray
 
     logger.info(f"Saving COLMAP-compatible reconstruction in {colmap_dir.resolve()}")
 
-    # images
-    images = ""
+    original_image_path = Path(name).parent.joinpath("images")
     traj = PoseTrajectory3D(poses_se3=list(map(np.linalg.inv, traj.poses_se3)), timestamps=traj.timestamps)
-    for idx, (x,y,z), (qw, qx, qy, qz) in zip(range(1,traj.num_poses+1), traj.positions_xyz*scale, traj.orientations_quat_wxyz):
-        images += f"{idx} {qw} {qx} {qy} {qz} {x} {y} {z} 1\n\n"
+
+    image_list=None
+    if os.path.exists(original_image_path):
+        img_exts = ["*.png", "*.jpeg", "*.jpg"]
+        image_list = sorted(chain.from_iterable(Path(original_image_path).glob(e) for e in img_exts))
+        if not image_list:
+            logger.error(f"No images found in {original_image_path}")
+            return
+    images = ""
+    for tstamp, idx, (x,y,z), (qw, qx, qy, qz) in zip(tstamp, range(1,traj.num_poses+1), traj.positions_xyz*scale, traj.orientations_quat_wxyz):
+        # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME (https://colmap.github.io/format.html)
+        img_name = image_list[int(tstamp)].name if image_list else "image"
+        images += f"{idx} {qw} {qx} {qy} {qz} {x} {y} {z} 1 {img_name}\n\n"
     (colmap_dir / "images.txt").write_text(images)
 
     # points
@@ -88,8 +101,6 @@ def save_output_for_COLMAP(name: str, traj: PoseTrajectory3D, points: np.ndarray
         os.system(cmd)
         logger.info(f"Saved COLMAP-compatible reconstruction in {nerf_studio_colmap_dir.resolve()}")
 
-        # link images
-        original_image_path = Path(name).parent.joinpath("images")
         colmap_image_path = colmap_dir / "images"
         if not os.path.exists(colmap_image_path):
             # extfat does not support symlinks
@@ -97,5 +108,8 @@ def save_output_for_COLMAP(name: str, traj: PoseTrajectory3D, points: np.ndarray
             # os.system(f"ln -s {original_image_path} {colmap_image_path}")
             os.system(f"cp -r {original_image_path} {colmap_image_path}")
             logger.info(f"Copied images from {original_image_path} to {colmap_image_path}")
+
+        # create json file
+        colmap_to_json(nerf_studio_colmap_dir, colmap_dir)
 
     print(f"Saved COLMAP-compatible reconstruction in {colmap_dir.resolve()}")

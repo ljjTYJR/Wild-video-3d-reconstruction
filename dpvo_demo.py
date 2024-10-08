@@ -138,5 +138,4 @@ if __name__ == '__main__':
 
     if args.export_colmap:
         path = (Path(args.imagedir).parent).joinpath("dpvo_colmap")
-        image_path = Path(args.imagedir)
-        save_output_for_COLMAP(path, trajectory, points, colors, True, *calib)
+        save_output_for_COLMAP(path, tstamps, trajectory, points, colors, True, *calib)
