@@ -14,6 +14,7 @@ import torch
 import os
 from tqdm import tqdm
 
+import time
 from . import extractors, logger
 from .utils.base_model import dynamic_load
 from .utils.io import list_h5_names, read_image
@@ -247,6 +248,7 @@ def main(
         logger.info("Skipping the extraction.")
         return feature_path
 
+    start_time = time.time()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     Model = dynamic_load(extractors, conf["model"]["name"])
     model = Model(conf["model"]).eval().to(device)
@@ -294,7 +296,9 @@ def main(
                 raise error
 
         del pred
-
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Elapsed time: {elapsed_time:.6f} seconds")
     logger.info("Finished exporting features.")
     return feature_path
 
