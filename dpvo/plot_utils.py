@@ -101,13 +101,13 @@ def save_output_for_COLMAP(name: str, tstamp: np.ndarray, traj: PoseTrajectory3D
         os.system(cmd)
         logger.info(f"Saved COLMAP-compatible reconstruction in {nerf_studio_colmap_dir.resolve()}")
 
-        colmap_image_path = colmap_dir / "images"
-        if not os.path.exists(colmap_image_path):
+        # colmap_image_path = colmap_dir / "images"
+        # if not os.path.exists(colmap_image_path):
             # extfat does not support symlinks
             # logger.info(f"Linked images from {original_image_path} to {colmap_image_path}")
             # os.system(f"ln -s {original_image_path} {colmap_image_path}")
-            os.system(f"cp -r {original_image_path} {colmap_image_path}")
-            logger.info(f"Copied images from {original_image_path} to {colmap_image_path}")
+            # os.system(f"cp -r {original_image_path} {colmap_image_path}")
+            # logger.info(f"Copied images from {original_image_path} to {colmap_image_path}")
 
         # create json file
         colmap_to_json(nerf_studio_colmap_dir, colmap_dir)
