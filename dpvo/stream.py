@@ -21,7 +21,7 @@ def image_stream(queue, imagedir, calib, stride, skip=0):
     image_list = sorted(chain.from_iterable(Path(imagedir).glob(e) for e in img_exts))[skip::stride]
 
     for t, imfile in enumerate(image_list):
-        image = cv2.imread(str(imfile))
+        image = cv2.imread(str(imfile), cv2.IMREAD_COLOR) # BGR
         if len(calib) > 4:
             image = cv2.undistort(image, K, calib[4:])
 
@@ -31,7 +31,7 @@ def image_stream(queue, imagedir, calib, stride, skip=0):
 
         else:
             intrinsics = np.array([fx, fy, cx, cy])
-            
+
         h, w, _ = image.shape
         image = image[:h-h%16, :w-w%16]
 

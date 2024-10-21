@@ -6,6 +6,7 @@ from . import fastba
 from . import altcorr
 from . import lietorch
 from .lietorch import SE3
+from lightglue import SuperPoint
 
 from .net import VONet
 from .utils import *
@@ -46,6 +47,15 @@ class DPVO:
 
         # dummy image for visualization
         self.image_ = torch.zeros(self.ht, self.wd, 3, dtype=torch.uint8, device="cpu")
+
+        # super-point extractor
+        try:
+            # self.sp_extractor = SuperPoint(max_num_keypoints=self.cfg.PATCHES_PER_FRAME).eval().cuda()  # load the extractor
+            self.sp_extractor = None
+        except:
+            self.sp_extractor = None
+        if self.sp_extractor is not None:
+            self.M += self.cfg.PATCHES_PER_FRAME # random sampling + super point extraction
 
         self.tstamps_ = torch.zeros(self.N, dtype=torch.long, device="cuda")
         self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda") # world to camera
@@ -432,15 +442,15 @@ class DPVO:
 
         if self.viewer is not None:
             self.viewer.update_image(image)
-        self.image_ = image
-        image = 2 * (image[None,None] / 255.0) - 0.5
+        self.image_ = image # cv2 read-in image
 
         with torch.amp.autocast('cuda', enabled=self.cfg.MIXED_PRECISION):
             fmap, gmap, imap, patches, _, clr = \
                 self.network.patchify(image,
                     patches_per_image=self.cfg.PATCHES_PER_FRAME,
                     gradient_bias=self.cfg.GRADIENT_BIAS,
-                    return_color=True)
+                    return_color=True,
+                    sp_extractor=self.sp_extractor)
 
         ### update state attributes ###
         self.tlist.append(tstamp)

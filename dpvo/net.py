@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
+import copy
 
 import torch_scatter
 from torch_scatter import scatter_sum
@@ -107,7 +108,14 @@ class Patchifier(nn.Module):
         g = F.avg_pool2d(g, 4, 4)
         return g
 
-    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False):
+    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False, sp_extractor=None):
+        if sp_extractor is not None:
+            sp_img = copy.deepcopy(images) # (3,H,W)
+            # BGR to RGB
+            sp_img = sp_img[[2, 1, 0], :, :] / 255.0 # BGR->RGB
+            sp_points = sp_extractor.extract(sp_img)['keypoints'] # (N, 2)
+
+        images = 2 * (images[None,None] / 255.0) - 0.5
         """ extract patches from input images """
         fmap = self.fnet(images) / 4.0
         imap = self.inet(images) / 4.0
@@ -133,6 +141,9 @@ class Patchifier(nn.Module):
             y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
 
         coords = torch.stack([x, y], dim=-1).float()
+        if sp_extractor is not None:
+            coords = torch.cat([coords, sp_points], dim=1)
+
         imap = altcorr.patchify(imap[0], coords, 0).view(b, -1, DIM, 1, 1)
         gmap = altcorr.patchify(fmap[0], coords, P//2).view(b, -1, 128, P, P)
 
