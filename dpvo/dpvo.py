@@ -20,9 +20,6 @@ from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
 from mast3r.model import AsymmetricMASt3R
 from mast3r.inference import local_dust3r_ba
 
-from dpvo.dpvo_colmap_init import DPVOColmapInit
-import os
-
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
@@ -124,15 +121,7 @@ class DPVO:
             self.mast3r_model=None
         self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
 
-        self.colmap_est = colmap_init
-        self.colmap_warmup = 50 # use `colmap_warmup` to feed into the colmap for initialization
-        self.colmap_initial_path = f"{path}/initialized/"
-        self.colmap_initial_images = f"{self.colmap_initial_path}/images"
-        os.makedirs(f"{self.colmap_initial_images}", exist_ok=True)
-        assert not self.mast3r_est or not self.colmap_est, "Only one initialization method can be used"
-
         self.motion_filter=motion_filter
-
         self.path = path
 
     def rr_register_info(self,
@@ -467,10 +456,7 @@ class DPVO:
         ### update state attributes ###
         self.tlist.append(tstamp)
         self.tstamps_[self.n] = self.counter
-        if self.mast3r_est or self.colmap_est:
-            self.intrinsics_[self.n] = self.intrinsics_[0].clone() # if use the Mast3R estimation, we use the first one, which is enough
-        else:
-            self.intrinsics_[self.n] = intrinsics / self.RES
+        self.intrinsics_[self.n] = intrinsics / self.RES
 
         # color info for visualization
         clr = (clr[0,:,[2,1,0]] + 0.5) * (255.0 / 2)
@@ -520,25 +506,8 @@ class DPVO:
         self.append_factors(*self.__edges_forw()) # connect previous patches to the current new frame
         self.append_factors(*self.__edges_back())
 
-        if not self.is_initialized:
-            if self.mast3r_est:
-                self.mast3r_image_buffer.append(self.image_.clone())
-            elif self.colmap_est:
-                cv2.imwrite(f"{self.colmap_initial_images}/{self.n}.png", self.image_.cpu().numpy().transpose(1, 2, 0))
-
-        if not self.is_initialized:
-            if self.colmap_est and self.n == self.colmap_warmup:
-                init_recon = DPVOColmapInit(self.colmap_initial_path)
-                colmap_fx, colmap_fy, colmap_cx, colmap_cy = init_recon.run()
-                print(f"Colmap initialization: fx={colmap_fx}, fy={colmap_fy}, cx={colmap_cx}, cy={colmap_cy}")
-                self.intrinsics_[:self.colmap_warmup] = torch.tensor([colmap_fx, colmap_fy, colmap_cx, colmap_cy], device='cuda')
-
-                # with the initialized intrinsic and camera poses, run the local BA with the local window. With 50 frames.
-                for itr in range(60):
-                    if self.rr:
-                        self.rr_register_info(itr)
-                    self.update()
-                self.is_initialized = True
+        if self.n == self.warm_up and not self.is_initialized:
+            self.is_initialized = True
             """
             elif self.n == self.warm_up:
                 self.is_initialized = True
@@ -571,14 +540,14 @@ class DPVO:
                     #         median_depth = torch.median(extracted_depths)
                     #         patch[i, 2, :, :] = 1/median_depth # NOTE: we use the inverse depth
                     #     self.patches_[idx] = patch
-                for itr in range(12):
-                    if self.rr:
-                        self.rr_register_info(itr)
-                    self.update()
 
                 del self.mast3r_image_buffer
                 del self.mast3r_model
                 """
+            for itr in range(12):
+                if self.rr:
+                    self.rr_register_info(itr)
+                self.update()
 
         elif self.is_initialized:
             self.update()

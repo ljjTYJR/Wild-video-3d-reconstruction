@@ -125,7 +125,12 @@ class DPVOColmapInit:
         #     cmd = f"glomap mapper --database_path {database_path} --image_path {self.imgs_dir} --output_path {self.output_dir}/glomap"
         #     os.system(cmd)
 
-        # read camera intrinsic from the txt file
+        num_imgs = model.num_reg_images() # number of registered images for the largest model
+        num_all_imgs = len(list(self.imgs_dir.glob("*")))
+        if num_imgs < num_all_imgs * 0.7:
+            logger.error(f"Only {num_imgs} images registered out of {num_all_imgs}.")
+            # TODO: use the glomap for registration instead!
+            raise ValueError("Not enough images registered.")
         target_dir = self.output_dir / "reconstruction"
         camera_txt = target_dir / "cameras.txt"
         # read the simple_pinhole camera model

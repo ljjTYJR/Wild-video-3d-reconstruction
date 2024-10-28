@@ -14,8 +14,9 @@ import datetime
 from dpvo.utils import Timer
 from dpvo.dpvo import DPVO
 from dpvo.config import cfg
-from dpvo.stream import image_stream, video_stream
+from dpvo.stream import image_stream, video_stream, image_stream_limit
 from dpvo.plot_utils import plot_trajectory, save_trajectory_tum_format, save_output_for_COLMAP
+from dpvo.dpvo_colmap_init import DPVOColmapInit
 
 SKIP = 0
 
@@ -42,6 +43,31 @@ def run(
 
     slam = None
     queue = Queue(maxsize=8)
+    init_intrinsic = None
+
+    # after the initialization, re-start the reader
+    if colmap_init:
+        colmap_warmup = 50 # use `colmap_warmup` to feed into the colmap for initialization
+        reader = Process(target=image_stream_limit, args=(queue, imagedir, calib, stride, skip, colmap_warmup))
+        reader.start()
+        colmap_initial_path = f"{path}/initialized/"
+        colmap_initial_images = f"{colmap_initial_path}/images"
+        os.makedirs(f"{colmap_initial_images}", exist_ok=True)
+        t = 0
+        while t < colmap_warmup:
+            (t, image, intrinsics) = queue.get()
+            # save images
+            cv2.imwrite(f"{colmap_initial_images}/{t:06d}.png", image)
+
+        # run the initial COLMAP reconstruction
+        init_recon = DPVOColmapInit(colmap_initial_path)
+        colmap_fx, colmap_fy, colmap_cx, colmap_cy = init_recon.run()
+        print(f"Colmap initialization: fx={colmap_fx}, fy={colmap_fy}, cx={colmap_cx}, cy={colmap_cy}")
+        init_intrinsic = np.array([colmap_fx, colmap_fy, colmap_cx, colmap_cy])
+
+        while not queue.empty():
+            queue.get()
+        reader.join()
 
     if os.path.isdir(imagedir):
         reader = Process(target=image_stream, args=(queue, imagedir, calib, stride, skip))
@@ -52,6 +78,8 @@ def run(
 
     while 1:
         (t, image, intrinsics) = queue.get()
+        if init_intrinsic is not None:
+            intrinsics = init_intrinsic
         if t < 0: break
         print(f"Processing frame {t}")
         image = torch.from_numpy(image).permute(2,0,1).cuda()

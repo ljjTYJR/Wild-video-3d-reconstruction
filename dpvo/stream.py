@@ -39,6 +39,40 @@ def image_stream(queue, imagedir, calib, stride, skip=0):
 
     queue.put((-1, image, intrinsics))
 
+def image_stream_limit(queue, imagedir, calib, stride, skip=0, end_idx=50):
+    """ image generator """
+
+    calib = np.loadtxt(calib, delimiter=" ")
+    fx, fy, cx, cy = calib[:4]
+
+    K = np.eye(3)
+    K[0,0] = fx
+    K[0,2] = cx
+    K[1,1] = fy
+    K[1,2] = cy
+
+    img_exts = ["*.png", "*.jpeg", "*.jpg"]
+    image_list = sorted(chain.from_iterable(Path(imagedir).glob(e) for e in img_exts))[skip::stride]
+
+    for t, imfile in enumerate(image_list):
+        image = cv2.imread(str(imfile), cv2.IMREAD_COLOR) # BGR
+        if len(calib) > 4:
+            image = cv2.undistort(image, K, calib[4:])
+
+        if 0:
+            image = cv2.resize(image, None, fx=0.5, fy=0.5)
+            intrinsics = np.array([fx / 2, fy / 2, cx / 2, cy / 2])
+
+        else:
+            intrinsics = np.array([fx, fy, cx, cy])
+
+        h, w, _ = image.shape
+        image = image[:h-h%16, :w-w%16]
+
+        queue.put((t, image, intrinsics))
+        if t >= end_idx:
+            break
+
 
 def video_stream(queue, imagedir, calib, stride, skip=0):
     """ video generator """
