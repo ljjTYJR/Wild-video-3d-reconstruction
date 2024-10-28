@@ -36,7 +36,9 @@ def run(
     timeit=False,
     save_reconstruction=False,
     mast3r=False,
-    motion_filter=False):
+    colmap_init=False,
+    motion_filter=False,
+    path=None):
 
     slam = None
     queue = Queue(maxsize=8)
@@ -51,12 +53,12 @@ def run(
     while 1:
         (t, image, intrinsics) = queue.get()
         if t < 0: break
-
+        print(f"Processing frame {t}")
         image = torch.from_numpy(image).permute(2,0,1).cuda()
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, motion_filter=motion_filter)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, colmap_init=colmap_init, motion_filter=motion_filter, path=path)
 
         image = image.cuda()
         intrinsics = intrinsics.cuda()
@@ -95,6 +97,7 @@ if __name__ == '__main__':
     parser.add_argument('--buffer', type=int, default=1024)
     parser.add_argument('--config', default="dpvo_configs/default.yaml")
     parser.add_argument('--mast3r', action="store_true")
+    parser.add_argument('--colmap_init', action="store_true")
     parser.add_argument('--timeit', action='store_true')
     parser.add_argument('--viz', action="store_true")
     parser.add_argument('--plot', action="store_true")
@@ -118,8 +121,11 @@ if __name__ == '__main__':
     print("Running with config...")
     logger.info(cfg)
 
+    time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}")
+
     (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-                    args.mast3r, args.motion_filter)
+                    args.mast3r, args.colmap_init, args.motion_filter, path)
     name = Path(args.imagedir).stem
     trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)
 
@@ -137,5 +143,4 @@ if __name__ == '__main__':
     #     plot_trajectory(pred_traj, title=f"DPVO Trajectory Prediction for {name}", filename=f"trajectory_plots/{name}.pdf")
 
     if args.export_colmap:
-        path = (Path(args.imagedir).parent).joinpath("dpvo_colmap")
         save_output_for_COLMAP(path, tstamps, trajectory, points, colors, True, *calib)
