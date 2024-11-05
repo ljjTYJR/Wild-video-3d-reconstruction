@@ -53,6 +53,8 @@ def image_stream_limit(queue, imagedir, calib, stride, skip=0, end_idx=50):
 
     img_exts = ["*.png", "*.jpeg", "*.jpg"]
     image_list = sorted(chain.from_iterable(Path(imagedir).glob(e) for e in img_exts))[skip::stride]
+    if len(image_list) < end_idx:
+        raise ValueError(f"Number of images in the directory is less than {end_idx}")
 
     for t, imfile in enumerate(image_list):
         image = cv2.imread(str(imfile), cv2.IMREAD_COLOR) # BGR
