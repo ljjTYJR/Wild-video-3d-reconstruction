@@ -4,6 +4,7 @@ import glob
 import os.path as osp
 import os
 import torch
+import random
 from pathlib import Path
 from multiprocessing import Process, Queue
 from plyfile import PlyElement, PlyData
@@ -24,6 +25,16 @@ def show_image(image, t=0):
     image = image.permute(1, 2, 0).cpu().numpy()
     cv2.imshow('image', image / 255.0)
     cv2.waitKey(t)
+
+def seed_all(seed=0):
+    """Set seed for reproducibility."""
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # For multi-GPU
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 @torch.no_grad()
 def run(
@@ -133,10 +144,14 @@ if __name__ == '__main__':
     parser.add_argument('--save_trajectory', action="store_true")
     parser.add_argument('--motion_filter', action="store_true")
     parser.add_argument('--export_colmap', action="store_true")
+    parser.add_argument('--set_seed', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
     cfg.BUFFER_SIZE = args.buffer
+
+    if args.set_seed:
+        seed_all(0)
 
     # create the logging file
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
