@@ -113,7 +113,7 @@ class Patchifier(nn.Module):
             sp_img = copy.deepcopy(images) # (3,H,W)
             # BGR to RGB
             sp_img = sp_img[[2, 1, 0], :, :] / 255.0 # BGR->RGB
-            sp_points = sp_extractor.extract(sp_img)['keypoints'] # (N, 2)
+            sp_points = sp_extractor.extract(sp_img)['keypoints'] / 4.0 # reduce the resolution by 4.0 by default
 
         images = 2 * (images[None,None] / 255.0) - 0.5
         """ extract patches from input images """
