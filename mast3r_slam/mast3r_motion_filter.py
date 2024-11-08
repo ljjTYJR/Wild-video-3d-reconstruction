@@ -9,7 +9,7 @@ from collections import OrderedDict
 from droid_net import DroidNet
 
 import geom.projective_ops as pops
-from modules.corr import CorrBlock
+from droid_slam.modules.corr import CorrBlock
 
 # SEA-RAFT related optical flow estimation
 def sea_raft_optical_flow(image1, image2, sea_raft):

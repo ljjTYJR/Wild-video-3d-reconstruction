@@ -4,10 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 
-from modules.extractor import BasicEncoder
-from modules.corr import CorrBlock
-from modules.gru import ConvGRU
-from modules.clipping import GradientClip
+from droid_slam.modules.extractor import BasicEncoder
+from droid_slam.modules.corr import CorrBlock
+from droid_slam.modules.gru import ConvGRU
+from droid_slam.modules.clipping import GradientClip
 
 from lietorch import SE3
 from geom.ba import BA
@@ -118,7 +118,7 @@ class UpdateModule(nn.Module):
 
         output_dim = (batch, num, -1, ht, wd)
         net = net.view(batch*num, -1, ht, wd)
-        inp = inp.view(batch*num, -1, ht, wd)        
+        inp = inp.view(batch*num, -1, ht, wd)
         corr = corr.view(batch*num, -1, ht, wd)
         flow = flow.view(batch*num, -1, ht, wd)
 
@@ -162,7 +162,7 @@ class DroidNet(nn.Module):
 
         fmaps = self.fnet(images)
         net = self.cnet(images)
-        
+
         net, inp = net.split([128,128], dim=2)
         net = torch.tanh(net)
         inp = torch.relu(inp)
@@ -184,7 +184,7 @@ class DroidNet(nn.Module):
 
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
-        
+
         coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
         target = coords1.clone()
 

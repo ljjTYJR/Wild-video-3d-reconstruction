@@ -308,16 +308,6 @@ class DroidFrontend:
                 self.mast3r_model = None
                 torch.cuda.empty_cache()
 
-        ### Feed the initialized image to feed into the COLMAP.
-        # feed the initial guess of the focal, use the colmap to refine the intrinsics
-        images = self.video.images[:self.t1].clone().permute(0, 2, 3, 1).cpu().numpy()
-        # save the image to the `tmp` folder
-        for i in range(self.t1):
-            img = images[i]
-            img = Image.fromarray(img[..., ::-1]) # BGR -> RGB
-            img.save(f'tmp/{i}.png')
-
-
         self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 
         for itr in range(8):

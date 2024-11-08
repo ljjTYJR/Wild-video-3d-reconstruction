@@ -6,7 +6,7 @@ from collections import OrderedDict
 from droid_net import DroidNet
 
 import geom.projective_ops as pops
-from modules.corr import CorrBlock
+from droid_slam.modules.corr import CorrBlock
 
 
 class MotionFilter:
