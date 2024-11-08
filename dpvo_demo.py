@@ -59,23 +59,24 @@ def run(
     # after the initialization, re-start the reader
     if colmap_init:
         colmap_warmup = 50 # use `colmap_warmup` to feed into the colmap for initialization
-        reader = Process(target=image_stream_limit, args=(queue, imagedir, calib, stride, skip, colmap_warmup))
+        stride_init = 2
+        reader = Process(target=image_stream_limit, args=(queue, imagedir, calib, stride_init, skip, colmap_warmup))
         reader.start()
         colmap_initial_path = f"{path}/initialized/"
         colmap_initial_images = f"{colmap_initial_path}/images"
         os.makedirs(f"{colmap_initial_images}", exist_ok=True)
-        t = 0
-        while t < colmap_warmup:
+        count = 0
+        while count < colmap_warmup:
             (t, image, intrinsics) = queue.get()
             # save images
             cv2.imwrite(f"{colmap_initial_images}/{t:06d}.png", image)
+            count += 1
 
         # run the initial COLMAP reconstruction
         init_recon = DPVOColmapInit(colmap_initial_path)
         colmap_fx, colmap_fy, colmap_cx, colmap_cy = init_recon.run()
         print(f"Colmap initialization: fx={colmap_fx}, fy={colmap_fy}, cx={colmap_cx}, cy={colmap_cy}")
         init_intrinsic = np.array([colmap_fx, colmap_fy, colmap_cx, colmap_cy])
-
         while not queue.empty():
             queue.get()
         reader.join()
@@ -119,6 +120,22 @@ def run(
         return slam.terminate(), PlyData([el], text=True)
 
     points, colors, (intrinsic, H, W) = slam.get_pts_clr_intri()
+
+    # save the inlier ratio record to the path, `inlier_ratio_record` is a dictionary: {frame_id: inlier_ratio}
+    inlier_ratio_record = slam.inlier_ratio_record
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+    with open(f"{path}/inlier_ratio_record.txt", "w") as f:
+        for key in inlier_ratio_record:
+            f.write(f"{key} {inlier_ratio_record[key]}\n")
+    # draw the figure of inlier ratio respect to the frame id
+    import matplotlib.pyplot as plt
+    plt.plot(np.array(list(inlier_ratio_record.keys())), np.array(list(inlier_ratio_record.values())))
+    plt.xlabel("frame id")
+    plt.ylabel("inlier ratio")
+    plt.title("Inlier ratio respect to the frame id")
+    plt.savefig(f"{path}/inlier_ratio_record.png")
+    plt.close()
 
     # (poses, tstamps), (points, colors, (intrinsic, h, w))
     return slam.terminate(), (points, colors, (*intrinsic, H, W))
@@ -187,3 +204,6 @@ if __name__ == '__main__':
 
     if args.export_colmap:
         save_output_for_COLMAP(path, tstamps, trajectory, points, colors, True, *calib)
+        # save the configuration file to the path
+        with open(f"{path}/config.yaml", "w") as f:
+            f.write(cfg.dump())
