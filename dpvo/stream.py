@@ -55,7 +55,7 @@ def image_stream_limit(queue, imagedir, calib, stride, skip=0, end_idx=50):
     image_list = sorted(chain.from_iterable(Path(imagedir).glob(e) for e in img_exts))[skip::stride]
     if len(image_list) < end_idx:
         raise ValueError(f"Number of images in the directory is less than {end_idx}")
-
+    count = 0
     for t, imfile in enumerate(image_list):
         image = cv2.imread(str(imfile), cv2.IMREAD_COLOR) # BGR
         if len(calib) > 4:
@@ -72,7 +72,8 @@ def image_stream_limit(queue, imagedir, calib, stride, skip=0, end_idx=50):
         image = image[:h-h%16, :w-w%16]
 
         queue.put((t, image, intrinsics))
-        if t >= end_idx:
+        count += 1
+        if count >= end_idx:
             break
 
 

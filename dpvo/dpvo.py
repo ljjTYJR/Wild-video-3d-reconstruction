@@ -12,6 +12,7 @@ from .net import VONet
 from .utils import *
 from . import projective_ops as pops
 import cv2
+import os
 
 import rerun as rr
 
@@ -79,6 +80,8 @@ class DPVO:
         self.imap_ = torch.zeros(self.mem, self.M, DIM, **kwargs)
         self.gmap_ = torch.zeros(self.mem, self.M, 128, self.P, self.P, **kwargs)
 
+        self.image_buffer_ = torch.zeros(self.mem, 3, self.ht, self.wd, dtype=torch.uint8, device="cuda")
+
         ht = ht // RES
         wd = wd // RES
 
@@ -124,6 +127,9 @@ class DPVO:
         self.motion_filter=motion_filter
         self.path = path
 
+        self.inlier_ratio_record = {}
+        self.inlier_ratio_threshold = 0.8
+
     def rr_register_info(self,
         frame_n=None,
         point_label='world/points',
@@ -145,7 +151,7 @@ class DPVO:
         poses = poses.inv().data.cpu().numpy()
         translations = poses[:, :3] * scale
         rotations = poses[:, 3:]
-        # rr.log(path_label, rr.LineStrips3D([translations], colors=[[255, 0, 0]]))
+        rr.log(path_label, rr.LineStrips3D([translations], colors=[[255, 0, 0]]))
 
         # log the images
         image = self.image_.cpu().numpy()
@@ -153,7 +159,35 @@ class DPVO:
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         rr.log(image_label, rr.Image(image))
         rr.log(f"world/camera/{self.n}", rr.Pinhole(focal_length=float(self.intrinsics[0][0][0].cpu()), height=self.ht/self.RES, width=self.wd/self.RES))
-        rr.log(f"world/camera/{self.n}", rr.Transform3D(translation=translations[-1], rotation=rr.Quaternion(xyzw=rotations[-1]), scale=0.0050))
+        rr.log(f"world/camera/{self.n}", rr.Transform3D(translation=translations[-1], rotation=rr.Quaternion(xyzw=rotations[-1]), scale=0.50))
+
+    def save_inlier_ratio_record(self, path):
+        # save the inlier ratio record to the path, `inlier_ratio_record` is a dictionary: {frame_id: inlier_ratio}
+        inlier_ratio_record = self.inlier_ratio_record
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
+
+        # process the last OPTIMIZATION_WINDOW frames
+        for i in range(self.n-self.cfg.OPTIMIZATION_WINDOW+2, self.n+1):
+            ref_frame, inlier_ratio = self.geo_consistency_check(i, i-1)
+            inlier_ratio_record[self.tstamps_[ref_frame].item()] = inlier_ratio.item()
+        with open(f"{path}/inlier_ratio_record.txt", "w") as f:
+            for key in inlier_ratio_record:
+                f.write(f"{key} {inlier_ratio_record[key]}\n")
+        with open(f"{path}/time_stamp.txt", "w") as f:
+            for i in range(self.n):
+                f.write(f"{self.tstamps_[i].item()}\n")
+        # draw the figure of inlier ratio respect to the frame id
+        import matplotlib.pyplot as plt
+        x_ = np.array(list(inlier_ratio_record.keys()))
+        y_ = np.array(list(inlier_ratio_record.values()))
+        plt.plot(x_, y_, 'o-', label="inlier ratio")
+        plt.xticks(x_)
+        plt.xlabel("frame timestamp")
+        plt.ylabel("inlier ratio")
+        plt.title("Inlier ratio respect to the frame id")
+        plt.savefig(f"{path}/inlier_ratio_record.png")
+        plt.close()
 
     def load_weights(self, network):
         # load network from checkpoint file
@@ -219,7 +253,7 @@ class DPVO:
     def gmap(self):
         return self.gmap_.view(1, self.mem * self.M, 128, 3, 3)
 
-    def get_pts_clr_intri(self):
+    def get_pts_clr_intri(self, inlier=False):
         # self.m is the number of patches; self.m = self.N * self.M
         points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, self.ix[:self.m])
         points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3).cpu().numpy()
@@ -231,6 +265,10 @@ class DPVO:
 
         intrinsic = self.intrinsics_[0].cpu().numpy() * self.RES
         H, W = self.ht, self.wd
+
+        # save the inlier ratio record
+        if inlier:
+            self.save_inlier_ratio_record(self.path)
         return points[mask], colors[mask], (intrinsic, H, W)
 
     def get_pose(self, t):
@@ -345,8 +383,18 @@ class DPVO:
                 self.fmap2_[0,i%self.mem] = self.fmap2_[0,(i+1)%self.mem]
 
             self.n -= 1
-            self.m-= self.M
+            self.m -= self.M
 
+        # Only need to larger than the OPTIMIZATION_WINDOW?
+        if self.n > self.cfg.OPTIMIZATION_WINDOW:
+            ref_frame, inlier_ratio = self.geo_consistency_check(self.n-self.cfg.OPTIMIZATION_WINDOW+1, self.n-self.cfg.OPTIMIZATION_WINDOW)
+            """
+            if inlier_ratio < self.inlier_ratio_threshold:
+                # it means the current window of frames are with bad estimation, we need to switch to better estimation
+                # The last OPTIMIZATION_WINDOW frames will be reset by mast3r model, at the meantime, we need to maintain the structure.
+                # for the last frame in the window, the farest frame is `n-13`, we might need to shorten the range.
+            """
+            self.inlier_ratio_record[self.tstamps_[ref_frame].item()] = inlier_ratio.item()
         to_remove = self.ix[self.kk] < self.n - self.cfg.REMOVAL_WINDOW
         self.remove_factors(to_remove)
 
@@ -379,14 +427,29 @@ class DPVO:
             self.points_[:len(points)] = points[:]
         return points, target # the `points` are the 3D points in the scene; while the target is the re-projection of points
 
+    def geo_consistency_check(self, query_frame, fixed_frame):
+        coords = self.reproject()
+        with torch.amp.autocast('cuda', enabled=True):
+                corr = self.corr(coords) # correleation
+                ctx = self.imap[:,self.kk % (self.M * self.mem)]
+                self.net, (delta, weight, _) = \
+                    self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
+
+        weight = weight.float()
+        target = coords[...,self.P//2,self.P//2] + delta.float() # so each patch will be treated as a whole, when P is 3, it is the center of the patch
+        src_window_mask = self.ii == query_frame # it is the fixed frame for
+        tgt_window_mask = self.jj <= fixed_frame
+        mask = src_window_mask & tgt_window_mask # the final patch mask, starting from optimizable frames to fixed frames
+        coords = coords.squeeze()[mask][:,:,1,1]
+        target = target.squeeze()[mask]
+        r = (coords-target).norm(dim=-1)
+        cx = self.intrinsics[0][0][2]; cy = self.intrinsics[0][0][3]
+        in_bounds = (coords[:,0] > -cx) & (coords[:,1] < 3 * cx) & (coords[:,1] > -cy) & (coords[:,1] < 3 * cy)
+        low_ropj_error = r < 4.0
+        inlier_ratio = ((low_ropj_error & in_bounds).sum().float() / mask.sum().float()).cpu().numpy()
+        return query_frame, inlier_ratio
+
     def update(self):
-        # visualize the points first
-        # FIRST_FRAME_PATCHES = 96
-        # points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.M], self.intrinsics, self.ix[:self.M]) # note that it will return all the points so far
-        # points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3)
-        # # register the points in the rerun
-        # points = points.cpu().numpy() if points.is_cuda else points
-        # rr.log('world/points', rr.Points3D(points))
 
         with Timer("other", enabled=self.enable_timing):
             coords = self.reproject() # [B, N, 2, p, p] which indicates the corresponding tracks, it can be implemented by the pycolmap with mast3r initialization
@@ -491,6 +554,7 @@ class DPVO:
         self.gmap_[self.n % self.mem] = gmap.squeeze()
         self.fmap1_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 1, 1)
         self.fmap2_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 4, 4)
+        self.image_buffer_[self.n % self.mem] = image
 
         self.counter += 1
         # use enough initial motions for initialization

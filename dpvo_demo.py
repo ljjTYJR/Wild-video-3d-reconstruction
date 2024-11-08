@@ -11,6 +11,7 @@ from plyfile import PlyElement, PlyData
 from evo.core.trajectory import PoseTrajectory3D
 from loguru import logger
 import datetime
+import yaml
 
 from dpvo.utils import Timer
 from dpvo.dpvo import DPVO
@@ -119,23 +120,7 @@ def run(
         el = PlyElement.describe(points, 'vertex',{'some_property': 'f8'},{'some_property': 'u4'})
         return slam.terminate(), PlyData([el], text=True)
 
-    points, colors, (intrinsic, H, W) = slam.get_pts_clr_intri()
-
-    # save the inlier ratio record to the path, `inlier_ratio_record` is a dictionary: {frame_id: inlier_ratio}
-    inlier_ratio_record = slam.inlier_ratio_record
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-    with open(f"{path}/inlier_ratio_record.txt", "w") as f:
-        for key in inlier_ratio_record:
-            f.write(f"{key} {inlier_ratio_record[key]}\n")
-    # draw the figure of inlier ratio respect to the frame id
-    import matplotlib.pyplot as plt
-    plt.plot(np.array(list(inlier_ratio_record.keys())), np.array(list(inlier_ratio_record.values())))
-    plt.xlabel("frame id")
-    plt.ylabel("inlier ratio")
-    plt.title("Inlier ratio respect to the frame id")
-    plt.savefig(f"{path}/inlier_ratio_record.png")
-    plt.close()
+    points, colors, (intrinsic, H, W) = slam.get_pts_clr_intri(inlier=True)
 
     # (poses, tstamps), (points, colors, (intrinsic, h, w))
     return slam.terminate(), (points, colors, (*intrinsic, H, W))
@@ -168,7 +153,7 @@ if __name__ == '__main__':
     cfg.BUFFER_SIZE = args.buffer
 
     if args.set_seed:
-        seed_all(0)
+        seed_all(1)
 
     # create the logging file
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -207,3 +192,6 @@ if __name__ == '__main__':
         # save the configuration file to the path
         with open(f"{path}/config.yaml", "w") as f:
             f.write(cfg.dump())
+            args_dict = vars(args)
+            yaml.dump(args_dict, f, default_flow_style=False)
+            f.close()
