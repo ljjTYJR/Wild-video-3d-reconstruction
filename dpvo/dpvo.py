@@ -181,8 +181,8 @@ class DPVO:
         import matplotlib.pyplot as plt
         x_ = np.array(list(inlier_ratio_record.keys()))
         y_ = np.array(list(inlier_ratio_record.values()))
-        plt.plot(x_, y_, 'o-', label="inlier ratio")
-        plt.xticks(x_)
+        plt.plot(x_, y_, label="inlier ratio")
+        # plt.xticks(x_)
         plt.xlabel("frame timestamp")
         plt.ylabel("inlier ratio")
         plt.title("Inlier ratio respect to the frame id")
@@ -261,7 +261,9 @@ class DPVO:
 
         patches = self.patches_[:self.n][..., self.P // 2, self.P // 2]
         med_by_frame = patches[:, :, 2].median(dim=1).values
-        mask = (patches[:, :, -1] > 0.5 * med_by_frame[:, None]).view(-1).cpu().numpy()
+        mask_far = (patches[:, :, -1] > 1.0 * med_by_frame[:, None]).view(-1).cpu().numpy()
+        mask_near = (patches[:, :, -1] < 4.0 * med_by_frame[:, None]).view(-1).cpu().numpy()
+        mask = mask_far & mask_near
 
         intrinsic = self.intrinsics_[0].cpu().numpy() * self.RES
         H, W = self.ht, self.wd
@@ -432,7 +434,7 @@ class DPVO:
         with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
                 ctx = self.imap[:,self.kk % (self.M * self.mem)]
-                self.net, (delta, weight, _) = \
+                _, (delta, weight, _) = \
                     self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
 
         weight = weight.float()
