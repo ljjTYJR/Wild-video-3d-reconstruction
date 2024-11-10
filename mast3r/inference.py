@@ -17,8 +17,8 @@ from dust3r.cloud_opt.commons import (edge_str, signed_expm1, signed_log1p,
 from dust3r.cloud_opt.init_im_poses import fast_pnp
 from dust3r.optim_factory import adjust_learning_rate_by_lr
 from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference, paris_symmetric_inference
-from mast3r.fast_nn import fast_reciprocal_NNs_sample
-from mast3r.usage import rigid_points_registration
+from mast3r.fast_nn import fast_reciprocal_NNs_sample, fast_reciprocal_NNs
+from mast3r.usage import rigid_points_registration, show_image_matching
 from dust3r.utils.image import format_images, format_mast3r_out
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 
@@ -519,3 +519,17 @@ def local_dust3r_ba(images, model, scene_graph='complete', prefilter='seq3', sym
     scene = global_aligner(res, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
     loss = scene.compute_global_alignment(init="mst", niter=niter, schedule=schedule, lr=lr)
     return scene
+
+def local_ba_flexible(images, model, scene_graph='oneref-9', prefilter=None, symmetrize=False,
+                      fixed_idx=None,
+                      device='cuda', niter=200, schedule='cosine', lr=0.01):
+    # [ ] Test the two image prediction
+    images = format_images(images)
+    pairs = make_pairs(images, scene_graph=scene_graph, prefilter=prefilter, symmetrize=symmetrize) # By default, the last image will be set as reference
+
+    # preview the 3D in one image pair
+    # out = paris_symmetric_inference(pairs, model, device) # For symmetric pairs,
+    # input = pairs[0]
+    # sample = out[next(iter(out))]
+    # show_image_matching(sample[0], sample[1], input[0], input[1]) # inputs are normalized image
+    return

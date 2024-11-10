@@ -1,17 +1,17 @@
 import cv2
-import numpy as np
 import glob
-import os.path as osp
 import os
 import torch
 import random
+import datetime
+import numpy as np
+import yaml
+import os.path as osp
 from pathlib import Path
 from multiprocessing import Process, Queue
 from plyfile import PlyElement, PlyData
 from evo.core.trajectory import PoseTrajectory3D
 from loguru import logger
-import datetime
-import yaml
 
 from dpvo.utils import Timer
 from dpvo.dpvo import DPVO
@@ -111,6 +111,14 @@ def run(
         slam.update()
 
     reader.join()
+
+    # try to save the DPVO instance
+    import pickle
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+    with open(f"{path}/dpvo.pkl", "wb") as f:
+        pickle.dump(slam, f)
+        f.close()
 
     if save_reconstruction:
         points = slam.points_.cpu().numpy()[:slam.m]

@@ -135,7 +135,7 @@ def format_images(images):
     # to RGB order, to correspond to the code `img = exif_transpose(PIL.Image.open(os.path.join(root, path))).convert('RGB')`
     if isinstance(images, list):
         images = torch.stack(images, dim=0)
-    images = images[:, [2, 1, 0], :, :]
+    images = images[:, [2, 1, 0], :, :] # To RGB
     imgs = []
     for i, image in enumerate(images):
         img = ImgNorm(image.permute(1,2,0).cpu().numpy())[None]

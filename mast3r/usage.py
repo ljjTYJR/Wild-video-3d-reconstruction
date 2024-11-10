@@ -2,6 +2,7 @@ import roma
 import torch
 import numpy as np
 from functools import lru_cache
+from mast3r.fast_nn import fast_reciprocal_NNs
 
 def rigid_points_registration(pts1, pts2, conf):
     R, T, s = roma.rigid_points_registration(
@@ -93,3 +94,48 @@ def proj3d(inv_K, pixels, z):
     if pixels.shape[-1] == 2:
         pixels = torch.cat((pixels, torch.ones_like(pixels[..., :1])), dim=-1) # pixels: (n_points, 3), the last element is 1
     return z.unsqueeze(-1) * (pixels * inv_K.diag() + inv_K[:, 2] * mask110(z.device, z.dtype))
+
+def show_image_matching(pred1, pred2, input1, input2):
+    """ Show the image matching result predicted by the mast3r network """
+    desc1 = pred1['desc'].squeeze(0).detach()
+    desc2 = pred2['desc'].squeeze(0).detach()
+    matches_im0, matches_im1 = fast_reciprocal_NNs(desc1, desc2, subsample_or_initxy1=8,
+                                                   device='cuda', dist='dot', block_size=2**13) # the resulted mathces are 2d pixels, not 1D indices
+    print(f"Found {matches_im0.shape[0]} matches")
+    H0, W0 = input1['true_shape'][0]
+    valid_matches_im0 = (matches_im0[:, 0] >= 3) & (matches_im0[:, 0] < int(W0) - 3) & (
+        matches_im0[:, 1] >= 3) & (matches_im0[:, 1] < int(H0) - 3)
+    H1, W1 = input2['true_shape'][0]
+    valid_matches_im1 = (matches_im1[:, 0] >= 3) & (matches_im1[:, 0] < int(W1) - 3) & (
+        matches_im1[:, 1] >= 3) & (matches_im1[:, 1] < int(H1) - 3)
+    valid_matches = valid_matches_im0 & valid_matches_im1
+    matches_im0, matches_im1 = matches_im0[valid_matches], matches_im1[valid_matches]
+
+    # visualize a few matches
+    import numpy as np
+    import torchvision.transforms.functional
+    from matplotlib import pyplot as pl
+
+    n_viz = 40 # Control the visible matches
+    num_matches = matches_im0.shape[0]
+    match_idx_to_viz = np.round(np.linspace(0, num_matches - 1, n_viz)).astype(int)
+    viz_matches_im0, viz_matches_im1 = matches_im0[match_idx_to_viz], matches_im1[match_idx_to_viz]
+
+    viz_imgs = []
+    image_mean = torch.as_tensor([0.5, 0.5, 0.5], device='cpu').reshape(1, 3, 1, 1)
+    image_std = torch.as_tensor([0.5, 0.5, 0.5], device='cpu').reshape(1, 3, 1, 1)
+    for i, view in enumerate([input1, input2]):
+        rgb_tensor = view['img'] * image_std + image_mean
+        viz_imgs.append(rgb_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
+
+    H0, W0, H1, W1 = *viz_imgs[0].shape[:2], *viz_imgs[1].shape[:2]
+    img0 = np.pad(viz_imgs[0], ((0, max(H1 - H0, 0)), (0, 0), (0, 0)), 'constant', constant_values=0)
+    img1 = np.pad(viz_imgs[1], ((0, max(H0 - H1, 0)), (0, 0), (0, 0)), 'constant', constant_values=0)
+    img = np.concatenate((img0, img1), axis=1)
+    pl.figure()
+    pl.imshow(img)
+    cmap = pl.get_cmap('jet')
+    for i in range(n_viz):
+        (x0, y0), (x1, y1) = viz_matches_im0[i].T, viz_matches_im1[i].T
+        pl.plot([x0, x1 + W0], [y0, y1], '-+', color=cmap(i / (n_viz - 1)), scalex=False, scaley=False)
+    pl.show(block=True)
