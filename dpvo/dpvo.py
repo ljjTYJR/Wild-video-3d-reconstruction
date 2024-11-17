@@ -10,6 +10,7 @@ from lightglue import SuperPoint
 
 from .net import VONet
 from .utils import *
+from .patchgraph import PatchGraph
 from . import projective_ops as pops
 import cv2
 import os
@@ -31,8 +32,6 @@ class DPVO:
         self.is_initialized = False
         self.enable_timing = False
 
-        self.n = 0      # number of frames
-        self.m = 0      # number of patches
         self.M = self.cfg.PATCHES_PER_FRAME
         self.N = self.cfg.BUFFER_SIZE
 
@@ -58,27 +57,16 @@ class DPVO:
         if self.sp_extractor is not None:
             self.M += self.cfg.PATCHES_PER_FRAME # random sampling + super point extraction
 
-        self.tstamps_ = torch.zeros(self.N, dtype=torch.long, device="cuda")
-        self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda") # world to camera
-        self.patches_ = torch.zeros(self.N, self.M, 3, self.P, self.P, dtype=torch.float, device="cuda")
-        self.intrinsics_ = torch.zeros(self.N, 4, dtype=torch.float, device="cuda")
-
-        self.points_ = torch.zeros(self.N * self.M, 3, dtype=torch.float, device="cuda")
-        self.colors_ = torch.zeros(self.N, self.M, 3, dtype=torch.uint8, device="cuda")
-
-        self.index_ = torch.zeros(self.N, self.M, dtype=torch.long, device="cuda")
-        self.index_map_ = torch.zeros(self.N, dtype=torch.long, device="cuda")
-
         ### network attributes ###
-        self.mem = 32
+        self.pmem = self.mem = 36 # 32 was too small given default settings
 
         if self.cfg.MIXED_PRECISION:
             self.kwargs = kwargs = {"device": "cuda", "dtype": torch.half}
         else:
             self.kwargs = kwargs = {"device": "cuda", "dtype": torch.float}
 
-        self.imap_ = torch.zeros(self.mem, self.M, DIM, **kwargs)
-        self.gmap_ = torch.zeros(self.mem, self.M, 128, self.P, self.P, **kwargs)
+        self.imap_ = torch.zeros(self.pmem, self.M, DIM, **kwargs)
+        self.gmap_ = torch.zeros(self.pmem, self.M, 128, self.P, self.P, **kwargs)
 
         self.image_buffer_ = torch.zeros(self.mem, 3, self.ht, self.wd, dtype=torch.uint8, device="cuda")
 
@@ -91,22 +79,12 @@ class DPVO:
         # feature pyramid
         self.pyramid = (self.fmap1_, self.fmap2_)
 
-        self.net = torch.zeros(1, 0, DIM, **kwargs)
-        self.ii = torch.as_tensor([], dtype=torch.long, device="cuda")
-        self.jj = torch.as_tensor([], dtype=torch.long, device="cuda")
-        self.kk = torch.as_tensor([], dtype=torch.long, device="cuda")
-
-        # initialize poses to identity matrix
-        self.poses_[:,6] = 1.0
-
-        # store relative poses for removed frames
-        self.delta = {}
+        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, **kwargs)
+        self.warm_up = 10
 
         self.viewer = None
         if viz:
             self.start_viewer()
-
-        self.warm_up = 10
 
         # re-run visualization
         self.rr = True
@@ -130,6 +108,46 @@ class DPVO:
         self.inlier_ratio_record = {}
         self.inlier_ratio_threshold = 0.8
 
+    @property
+    def poses(self):
+        return self.pg.poses_.view(1, self.N, 7)
+
+    @property
+    def patches(self):
+        return self.pg.patches_.view(1, self.N*self.M, 3, 3, 3)
+
+    @property
+    def intrinsics(self):
+        return self.pg.intrinsics_.view(1, self.N, 4)
+
+    @property
+    def ix(self):
+        return self.pg.index_.view(-1)
+
+    @property
+    def imap(self):
+        return self.imap_.view(1, self.pmem * self.M, self.DIM)
+
+    @property
+    def gmap(self):
+        return self.gmap_.view(1, self.pmem * self.M, 128, 3, 3)
+
+    @property
+    def n(self):
+        return self.pg.n
+
+    @n.setter
+    def n(self, val):
+        self.pg.n = val
+
+    @property
+    def m(self):
+        return self.pg.m
+
+    @m.setter
+    def m(self, val):
+        self.pg.m = val
+
     def rr_register_info(self,
         frame_n=None,
         point_label='world/points',
@@ -147,7 +165,7 @@ class DPVO:
         rr.log(point_label, rr.Points3D(points, colors=colors))
 
         # register camera poses and visualize
-        poses = SE3(self.poses_[:self.n])
+        poses = SE3(self.pg.poses_[:self.n])
         poses = poses.inv().data.cpu().numpy()
         translations = poses[:, :3] * scale
         rotations = poses[:, 3:]
@@ -170,13 +188,13 @@ class DPVO:
         # process the last OPTIMIZATION_WINDOW frames
         for i in range(self.n-self.cfg.OPTIMIZATION_WINDOW+2, self.n+1):
             ref_frame, inlier_ratio = self.geo_consistency_check(i, i-1)
-            inlier_ratio_record[self.tstamps_[ref_frame].item()] = inlier_ratio.item()
+            inlier_ratio_record[self.pg.tstamps_[ref_frame].item()] = inlier_ratio.item()
         with open(f"{path}/inlier_ratio_record.txt", "w") as f:
             for key in inlier_ratio_record:
                 f.write(f"{key} {inlier_ratio_record[key]}\n")
         with open(f"{path}/time_stamp.txt", "w") as f:
             for i in range(self.n):
-                f.write(f"{self.tstamps_[i].item()}\n")
+                f.write(f"{self.pg.tstamps_[i].item()}\n")
         # draw the figure of inlier ratio respect to the frame id
         import matplotlib.pyplot as plt
         x_ = np.array(list(inlier_ratio_record.keys()))
@@ -223,49 +241,25 @@ class DPVO:
         intrinsics_ = torch.zeros(1, 4, dtype=torch.float32, device="cuda")
 
         self.viewer = Viewer(
-            self.image_,
-            self.poses_,
-            self.points_,
-            self.colors_,
+            self.pg.image_,
+            self.pg.poses_,
+            self.pg.points_,
+            self.pg.colors_,
             intrinsics_)
 
-    @property
-    def poses(self):
-        return self.poses_.view(1, self.N, 7)
-
-    @property
-    def patches(self):
-        return self.patches_.view(1, self.N*self.M, 3, 3, 3)
-
-    @property
-    def intrinsics(self):
-        return self.intrinsics_.view(1, self.N, 4)
-
-    @property
-    def ix(self):
-        return self.index_.view(-1)
-
-    @property
-    def imap(self):
-        return self.imap_.view(1, self.mem * self.M, self.DIM)
-
-    @property
-    def gmap(self):
-        return self.gmap_.view(1, self.mem * self.M, 128, 3, 3)
-
     def get_pts_clr_intri(self, inlier=False):
-        # self.m is the number of patches; self.m = self.N * self.M
-        points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, self.ix[:self.m])
+        # self.pg.m is the number of patches; self.pg.m = self.N * self.M
+        points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.pg.m], self.intrinsics, self.ix[:self.pg.m])
         points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3).cpu().numpy()
-        colors = (self.colors_.view(-1, 3)[:self.m].cpu().numpy() if self.colors_.is_cuda else self.colors_.view(-1, 3)[:self.m]) * 255.0
+        colors = (self.pg.colors_.view(-1, 3)[:self.pg.m].cpu().numpy() if self.pg.colors_.is_cuda else self.pg.colors_.view(-1, 3)[:self.pg.m]) * 255.0
 
-        patches = self.patches_[:self.n][..., self.P // 2, self.P // 2]
+        patches = self.pg.patches_[:self.n][..., self.P // 2, self.P // 2]
         med_by_frame = patches[:, :, 2].median(dim=1).values
         mask_far = (patches[:, :, -1] > 1.0 * med_by_frame[:, None]).view(-1).cpu().numpy()
         mask_near = (patches[:, :, -1] < 4.0 * med_by_frame[:, None]).view(-1).cpu().numpy()
         mask = mask_far & mask_near
 
-        intrinsic = self.intrinsics_[0].cpu().numpy() * self.RES
+        intrinsic = self.pg.intrinsics_[0].cpu().numpy() * self.RES
         H, W = self.ht, self.wd
 
         # save the inlier ratio record
@@ -277,14 +271,14 @@ class DPVO:
         if t in self.traj:
             return SE3(self.traj[t])
 
-        t0, dP = self.delta[t]
+        t0, dP = self.pg.delta[t]
         return dP * self.get_pose(t0)
 
     def terminate(self):
         """ interpolate missing poses """
         self.traj = {}
         for i in range(self.n):
-            self.traj[self.tstamps_[i].item()] = self.poses_[i]
+            self.traj[self.pg.tstamps_[i].item()] = self.pg.poses_[i]
 
         poses = [self.get_pose(t) for t in range(self.counter)]
         poses = lietorch.stack(poses, dim=0)
@@ -301,11 +295,11 @@ class DPVO:
         self.traj = {}
         key_frame_timestamps = []
         for i in range(self.n):
-            self.traj[self.tstamps_[i].item()] = self.poses_[i]
-            key_frame_timestamps.append(self.tstamps_[i].item())
+            self.traj[self.pg.tstamps_[i].item()] = self.pg.poses_[i]
+            key_frame_timestamps.append(self.pg.tstamps_[i].item())
         poses=[]
         for i in range(self.n):
-            poses.append(SE3(self.poses_[i]))
+            poses.append(SE3(self.pg.poses_[i]))
         poses = lietorch.stack(poses, dim=0)
         poses = poses.inv().data.cpu().numpy()
         tstamps = np.array(key_frame_timestamps, dtype=float)
@@ -317,7 +311,7 @@ class DPVO:
 
     def corr(self, coords, indicies=None):
         """ local correlation volume """
-        ii, jj = indicies if indicies is not None else (self.kk, self.jj)
+        ii, jj = indicies if indicies is not None else (self.pg.kk, self.pg.jj)
         ii1 = ii % (self.M * self.mem)
         jj1 = jj % (self.mem)
         corr1 = altcorr.corr(self.gmap, self.pyramid[0], coords / 1, ii1, jj1, 3)
@@ -326,27 +320,30 @@ class DPVO:
 
     def reproject(self, indicies=None):
         """ reproject patch k from i -> j """
-        (ii, jj, kk) = indicies if indicies is not None else (self.ii, self.jj, self.kk)
+        (ii, jj, kk) = indicies if indicies is not None else (self.pg.ii, self.pg.jj, self.pg.kk)
         coords = pops.transform(SE3(self.poses), self.patches, self.intrinsics, ii, jj, kk)
         return coords.permute(0, 1, 4, 2, 3).contiguous()
 
     def append_factors(self, kk, jj):
-        self.jj = torch.cat([self.jj, jj]) # target frame index
-        self.kk = torch.cat([self.kk, kk]) # patch index
-        self.ii = torch.cat([self.ii, self.ix[kk]]) # source frame index
+        self.pg.jj = torch.cat([self.pg.jj, jj]) # target frame index
+        self.pg.kk = torch.cat([self.pg.kk, kk]) # patch index
+        self.pg.ii = torch.cat([self.pg.ii, self.ix[kk]]) # source frame index
 
         net = torch.zeros(1, len(kk), self.DIM, **self.kwargs)
-        self.net = torch.cat([self.net, net], dim=1)
+        self.pg.net = torch.cat([self.pg.net, net], dim=1)
 
     def remove_factors(self, m):
-        self.ii = self.ii[~m]
-        self.jj = self.jj[~m]
-        self.kk = self.kk[~m]
-        self.net = self.net[:,~m]
+        self.pg.weight = self.pg.weight[:,~m]
+        self.pg.target = self.pg.target[:,~m]
+
+        self.pg.ii = self.pg.ii[~m]
+        self.pg.jj = self.pg.jj[~m]
+        self.pg.kk = self.pg.kk[~m]
+        self.pg.net = self.pg.net[:,~m]
 
     def motion_probe(self):
         """ kinda hacky way to ensure enough motion for initialization """
-        kk = torch.arange(self.m-self.M, self.m, device="cuda")
+        kk = torch.arange(self.pg.m-self.M, self.pg.m, device="cuda")
         jj = self.n * torch.ones_like(kk)
         ii = self.ix[kk]
 
@@ -362,10 +359,10 @@ class DPVO:
         return torch.quantile(delta.norm(dim=-1).float(), 0.5)
 
     def motionmag(self, i, j):
-        k = (self.ii == i) & (self.jj == j)
-        ii = self.ii[k]
-        jj = self.jj[k]
-        kk = self.kk[k]
+        k = (self.pg.ii == i) & (self.pg.jj == j)
+        ii = self.pg.ii[k]
+        jj = self.pg.jj[k]
+        kk = self.pg.kk[k]
 
         flow = pops.flow_mag(SE3(self.poses), self.patches, self.intrinsics, ii, jj, kk, beta=0.5)
         return flow.mean().item()
@@ -377,27 +374,27 @@ class DPVO:
         m = self.motionmag(i, j) + self.motionmag(j, i)
 
         if m / 2 < self.cfg.KEYFRAME_THRESH and self.motion_filter:
-            print(f"drop frame {self.tstamps_[self.n - cur_key].item()} due to low motion")
+            print(f"drop frame {self.pg.tstamps_[self.n - cur_key].item()} due to low motion")
             k = self.n - cur_key
-            t0 = self.tstamps_[k-1].item()
-            t1 = self.tstamps_[k].item()
+            t0 = self.pg.tstamps_[k-1].item()
+            t1 = self.pg.tstamps_[k].item()
 
-            dP = SE3(self.poses_[k]) * SE3(self.poses_[k-1]).inv()
-            self.delta[t1] = (t0, dP)
+            dP = SE3(self.pg.poses_[k]) * SE3(self.pg.poses_[k-1]).inv()
+            self.pg.delta[t1] = (t0, dP)
 
-            to_remove = (self.ii == k) | (self.jj == k)
+            to_remove = (self.pg.ii == k) | (self.pg.jj == k)
             self.remove_factors(to_remove)
 
-            self.kk[self.ii > k] -= self.M
-            self.ii[self.ii > k] -= 1
-            self.jj[self.jj > k] -= 1
+            self.pg.kk[self.pg.ii > k] -= self.M
+            self.pg.ii[self.pg.ii > k] -= 1
+            self.pg.jj[self.pg.jj > k] -= 1
 
             for i in range(k, self.n-1):
-                self.tstamps_[i] = self.tstamps_[i+1]
-                self.colors_[i] = self.colors_[i+1]
-                self.poses_[i] = self.poses_[i+1]
-                self.patches_[i] = self.patches_[i+1]
-                self.intrinsics_[i] = self.intrinsics_[i+1]
+                self.pg.tstamps_[i] = self.pg.tstamps_[i+1]
+                self.pg.colors_[i] = self.pg.colors_[i+1]
+                self.pg.poses_[i] = self.pg.poses_[i+1]
+                self.pg.patches_[i] = self.pg.patches_[i+1]
+                self.pg.intrinsics_[i] = self.pg.intrinsics_[i+1]
 
                 self.imap_[i%self.mem] = self.imap_[(i+1) % self.mem]
                 self.gmap_[i%self.mem] = self.gmap_[(i+1) % self.mem]
@@ -405,7 +402,7 @@ class DPVO:
                 self.fmap2_[0,i%self.mem] = self.fmap2_[0,(i+1)%self.mem]
 
             self.n -= 1
-            self.m -= self.M
+            self.pg.m -= self.M
 
         # Only need to larger than the OPTIMIZATION_WINDOW?
         if self.n > self.cfg.OPTIMIZATION_WINDOW:
@@ -416,8 +413,8 @@ class DPVO:
                 # The last OPTIMIZATION_WINDOW frames will be reset by mast3r model, at the meantime, we need to maintain the structure.
                 # for the last frame in the window, the farest frame is `n-13`, we might need to shorten the range.
             """
-            self.inlier_ratio_record[self.tstamps_[ref_frame].item()] = inlier_ratio.item()
-        to_remove = self.ix[self.kk] < self.n - self.cfg.REMOVAL_WINDOW
+            self.inlier_ratio_record[self.pg.tstamps_[ref_frame].item()] = inlier_ratio.item()
+        to_remove = self.ix[self.pg.kk] < self.n - self.cfg.REMOVAL_WINDOW
         self.remove_factors(to_remove)
 
     def update_get_corr(self):
@@ -426,9 +423,9 @@ class DPVO:
 
             with autocast(enabled=True):
                 corr = self.corr(coords)
-                ctx = self.imap[:,self.kk % (self.M * self.mem)]
-                self.net, (delta, weight, _) = \
-                    self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
+                ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
+                self.pg.net, (delta, weight, _) = \
+                    self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
 
             lmbda = torch.as_tensor([1e-4], device="cuda")
             weight = weight.float()
@@ -440,11 +437,11 @@ class DPVO:
 
             try:
                 fastba.BA(self.poses, self.patches, self.intrinsics,
-                    target, weight, lmbda, self.ii, self.jj, self.kk, t0, self.n, 2)
+                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
             except:
                 print("Warning BA failed...")
 
-            points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, self.ix[:self.m]) # note that it will return all the points so far
+            points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.pg.m], self.intrinsics, self.ix[:self.pg.m]) # note that it will return all the points so far
             points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3)
             self.points_[:len(points)] = points[:]
         return points, target # the `points` are the 3D points in the scene; while the target is the re-projection of points
@@ -453,14 +450,14 @@ class DPVO:
         coords = self.reproject()
         with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
-                ctx = self.imap[:,self.kk % (self.M * self.mem)]
+                ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
                 _, (delta, weight, _) = \
-                    self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
+                    self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
 
         weight = weight.float()
         target = coords[...,self.P//2,self.P//2] + delta.float() # so each patch will be treated as a whole, when P is 3, it is the center of the patch
-        src_window_mask = self.ii == query_frame # it is the fixed frame for
-        tgt_window_mask = self.jj <= fixed_frame
+        src_window_mask = self.pg.ii == query_frame # it is the fixed frame for
+        tgt_window_mask = self.pg.jj <= fixed_frame
         mask = src_window_mask & tgt_window_mask # the final patch mask, starting from optimizable frames to fixed frames
         coords = coords.squeeze()[mask][:,:,1,1]
         target = target.squeeze()[mask]
@@ -478,13 +475,16 @@ class DPVO:
 
             with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
-                ctx = self.imap[:,self.kk % (self.M * self.mem)]
-                self.net, (delta, weight, _) = \
-                    self.network.update(self.net, ctx, corr, None, self.ii, self.jj, self.kk)
+                ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
+                self.pg.net, (delta, weight, _) = \
+                    self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
 
             lmbda = torch.as_tensor([1e-4], device="cuda")
             weight = weight.float()
             target = coords[...,self.P//2,self.P//2] + delta.float() # so each patch will be treated as a whole, when P is 3, it is the center of the patch
+
+        self.pg.target = target
+        self.pg.weight = weight
 
         with Timer("BA", enabled=self.enable_timing):
             t0 = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
@@ -492,17 +492,17 @@ class DPVO:
 
             try:
                 fastba.BA(self.poses, self.patches, self.intrinsics,
-                    target, weight, lmbda, self.ii, self.jj, self.kk, t0, self.n, 2)
+                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
             except:
                 print("Warning BA failed...")
 
-            points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.m], self.intrinsics, self.ix[:self.m]) # note that it will return all the points so far
+            points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.pg.m], self.intrinsics, self.ix[:self.pg.m]) # note that it will return all the points so far
             points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3)
-            self.points_[:len(points)] = points[:]
+            self.pg.points_[:len(points)] = points[:]
 
     def __edges_all(self):
         return flatmeshgrid(
-            torch.arange(0, self.m, device="cuda"),
+            torch.arange(0, self.pg.m, device="cuda"),
             torch.arange(0, self.n, device="cuda"), indexing='ij')
 
     def __edges_forw(self):
@@ -523,7 +523,7 @@ class DPVO:
     def __call__(self, tstamp, image, intrinsics):
         """ track new frame """
 
-        if (self.n+1) >= self.N:
+        if (self.pg.n+1) >= self.pg.N:
             raise Exception(f'The buffer size is too small. You can increase it using "--buffer {self.N*2}"')
 
         if self.viewer is not None:
@@ -540,36 +540,36 @@ class DPVO:
 
         ### update state attributes ###
         self.tlist.append(tstamp)
-        self.tstamps_[self.n] = self.counter
-        self.intrinsics_[self.n] = intrinsics / self.RES
+        self.pg.tstamps_[self.n] = self.counter
+        self.pg.intrinsics_[self.n] = intrinsics / self.RES
 
         # color info for visualization
         clr = (clr[0,:,[2,1,0]] + 0.5) * (255.0 / 2)
-        self.colors_[self.n] = clr.to(torch.uint8)
+        self.pg.colors_[self.n] = clr.to(torch.uint8)
 
-        self.index_[self.n + 1] = self.n + 1
-        self.index_map_[self.n + 1] = self.m + self.M
+        self.pg.index_[self.n + 1] = self.pg.n + 1
+        self.pg.index_map_[self.n + 1] = self.pg.m + self.pg.M
 
-        if self.n > 1:
+        if self.pg.n > 1:
             if self.cfg.MOTION_MODEL == 'DAMPED_LINEAR':
-                P1 = SE3(self.poses_[self.n-1])
-                P2 = SE3(self.poses_[self.n-2])
+                P1 = SE3(self.pg.poses_[self.n-1])
+                P2 = SE3(self.pg.poses_[self.n-2])
 
                 xi = self.cfg.MOTION_DAMPING * (P1 * P2.inv()).log()
                 tvec_qvec = (SE3.exp(xi) * P1).data
-                self.poses_[self.n] = tvec_qvec
+                self.pg.poses_[self.n] = tvec_qvec
             else:
-                tvec_qvec = self.poses[self.n-1]
-                self.poses_[self.n] = tvec_qvec
+                tvec_qvec = self.pg.poses[self.n-1]
+                self.pg.poses_[self.n] = tvec_qvec
 
         # TODO better depth initialization
         # TODO use the metric3D as initialization (do we need intrinsic parameters?)
         patches[:,:,2] = torch.rand_like(patches[:,:,2,0,0,None,None]) # the patch dimension: [B, N, 3, p, p], the 3rd at 3 is the depth; 1st at 3 is W, 2rd at 3 in height
         if self.is_initialized:
-            s = torch.median(self.patches_[self.n-3:self.n,:,2])
+            s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
             patches[:,:,2] = s
 
-        self.patches_[self.n] = patches
+        self.pg.patches_[self.n] = patches
 
         ### update network attributes ###
         self.imap_[self.n % self.mem] = imap.squeeze()
@@ -582,11 +582,11 @@ class DPVO:
         # use enough initial motions for initialization
         if self.n > 0 and not self.is_initialized:
             if self.motion_probe() < 2.0:
-                self.delta[self.counter - 1] = (self.counter - 2, Id[0])
+                self.pg.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
 
-        self.n += 1
-        self.m += self.M
+        self.pg.n += 1
+        self.pg.m += self.M
 
         # relative pose
         self.append_factors(*self.__edges_forw()) # connect previous patches to the current new frame
@@ -609,12 +609,12 @@ class DPVO:
                     mast3r_intrinsics = torch.tensor([avg_intrinsics[0, 0], avg_intrinsics[0, 0],
                                                     avg_intrinsics[0, 2], avg_intrinsics[1, 2]], device='cuda') \
                                                     / self.RES
-                    self.intrinsics_[:self.warm_up] = mast3r_intrinsics
+                    self.pg.intrinsics_[:self.warm_up] = mast3r_intrinsics
 
                     # depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
                     # # initialize the path depth with the mast3r depth map
                     # for idx in range(len(depths)):
-                    #     patch = self.patches_[idx].clone()
+                    #     patch = self.pg.patches_[idx].clone()
                     #     depth = depths[idx]
                     #     N, _, W_patch, H_patch = patch.shape
                     #     for i in range(N):
@@ -625,7 +625,7 @@ class DPVO:
                     #         extracted_depths = depth[y_coords, x_coords]
                     #         median_depth = torch.median(extracted_depths)
                     #         patch[i, 2, :, :] = 1/median_depth # NOTE: we use the inverse depth
-                    #     self.patches_[idx] = patch
+                    #     self.pg.patches_[idx] = patch
 
                 del self.mast3r_image_buffer
                 del self.mast3r_model
