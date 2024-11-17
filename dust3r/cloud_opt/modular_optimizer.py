@@ -36,12 +36,15 @@ class ModularPointCloudOptimizer (BasePCOptimizer):
         self.im_pp.requires_grad_(optimize_pp)
 
     def preset_pose(self, known_poses, pose_msk=None):  # cam-to-world
+        """
+        Preset known poses with matrix format (4x4) or list of poses
+        """
         if isinstance(known_poses, torch.Tensor) and known_poses.ndim == 2:
             known_poses = [known_poses]
         for idx, pose in zip(self._get_msk_indices(pose_msk), known_poses):
             if self.verbose:
                 print(f' (setting pose #{idx} = {pose[:3,3]})')
-            self._no_grad(self._set_pose(self.im_poses, idx, torch.tensor(pose), force=True))
+            self._no_grad(self._set_pose(self.im_poses, idx, pose.clone().detach(), force=True))
 
         # normalize scale if there's less than 1 known pose
         n_known_poses = sum((p.requires_grad is False) for p in self.im_poses)

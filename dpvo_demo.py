@@ -131,7 +131,8 @@ def run(
     points, colors, (intrinsic, H, W) = slam.get_pts_clr_intri(inlier=True)
 
     # (poses, tstamps), (points, colors, (intrinsic, h, w))
-    return slam.terminate(), (points, colors, (*intrinsic, H, W))
+    # return slam.terminate(), (points, colors, (*intrinsic, H, W))
+    return slam.terminate_keyframe(), (points, colors, (*intrinsic, H, W))
 
 
 if __name__ == '__main__':

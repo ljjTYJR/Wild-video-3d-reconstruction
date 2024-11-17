@@ -296,6 +296,25 @@ class DPVO:
 
         return poses, tstamps
 
+    def terminate_keyframe(self):
+        """ Only report keyframes """
+        self.traj = {}
+        key_frame_timestamps = []
+        for i in range(self.n):
+            self.traj[self.tstamps_[i].item()] = self.poses_[i]
+            key_frame_timestamps.append(self.tstamps_[i].item())
+        poses=[]
+        for i in range(self.n):
+            poses.append(SE3(self.poses_[i]))
+        poses = lietorch.stack(poses, dim=0)
+        poses = poses.inv().data.cpu().numpy()
+        tstamps = np.array(key_frame_timestamps, dtype=float)
+
+        if self.viewer is not None:
+            self.viewer.join()
+
+        return poses, tstamps
+
     def corr(self, coords, indicies=None):
         """ local correlation volume """
         ii, jj = indicies if indicies is not None else (self.kk, self.jj)
@@ -352,13 +371,14 @@ class DPVO:
         return flow.mean().item()
 
     def keyframe(self):
-
-        i = self.n - self.cfg.KEYFRAME_INDEX - 1
-        j = self.n - self.cfg.KEYFRAME_INDEX + 1
+        cur_key = self.cfg.KEYFRAME_INDEX
+        i = self.n - cur_key - 1
+        j = self.n - cur_key + 1
         m = self.motionmag(i, j) + self.motionmag(j, i)
 
         if m / 2 < self.cfg.KEYFRAME_THRESH and self.motion_filter:
-            k = self.n - self.cfg.KEYFRAME_INDEX
+            print(f"drop frame {self.tstamps_[self.n - cur_key].item()} due to low motion")
+            k = self.n - cur_key
             t0 = self.tstamps_[k-1].item()
             t1 = self.tstamps_[k].item()
 

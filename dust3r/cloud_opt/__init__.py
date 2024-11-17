@@ -15,6 +15,7 @@ class GlobalAlignerMode(Enum):
     PointCloudOptimizer = "PointCloudOptimizer"
     ModularPointCloudOptimizer = "ModularPointCloudOptimizer"
     PairViewer = "PairViewer"
+    PointCloudOptimizerFixed = "PointCloudOptimizerFixed"
 
 
 def global_aligner(dust3r_output, device, mode=GlobalAlignerMode.PointCloudOptimizer, **optim_kw):

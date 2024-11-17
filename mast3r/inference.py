@@ -13,14 +13,15 @@ from dust3r.image_pairs import make_pairs
 from dust3r.post_process import estimate_focal_knowing_depth
 from dust3r.utils.geometry import xy_grid, geotrf, inv
 from dust3r.cloud_opt.commons import (edge_str, signed_expm1, signed_log1p,
-                                      ALL_DISTS, cosine_schedule, linear_schedule)
+                                      ALL_DISTS, cosine_schedule, linear_schedule, get_imshapes)
 from dust3r.cloud_opt.init_im_poses import fast_pnp
 from dust3r.optim_factory import adjust_learning_rate_by_lr
 from mast3r.cloud_opt.sparse_ga import paris_asymmetric_inference, paris_symmetric_inference
 from mast3r.fast_nn import fast_reciprocal_NNs_sample, fast_reciprocal_NNs
 from mast3r.usage import rigid_points_registration, show_image_matching
-from dust3r.utils.image import format_images, format_mast3r_out
+from dust3r.utils.image import format_images, format_mast3r_out, rgb
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
+from dust3r.inference import inference
 
 import droid_backends
 from lietorch import SE3
@@ -158,77 +159,89 @@ def ParameterStack(params, keys=None, is_param=None, fill=0):
     return params
 
 class LocalBA(nn.Module):
-    def __init__(self, known_poses, known_depths, preds, intrinsics, device='cuda'):
+    def __init__(self, fixed_indices, fixed_poses, pairs, preds, intrinsics, device='cuda'):
         super().__init__()
-        """ With the known poses and depths, optimizing the last frame's pose and depth """
-        ### prepare the data
-        assert len(known_poses) == len(known_depths)
+        """ With the known poses, optimizing the last frame's pose """
+        # prepare the data
+        assert len(fixed_indices) == len(fixed_poses)
         self.POSE_DIM = 7
-        self.H, self.W = known_depths[0].shape
-        self.known_cams = len(known_poses) - 1 # the last frame is the target
-        self.opt_cams = 1
         self.device = device
-        self.known_poses = known_poses
-        self.known_inv_depths = 1.0/known_depths
-        self.known_intrinsics = intrinsics
         self.dist = ALL_DISTS['l1']
-        # TODO
-        # symmetry = True if len(next(iter(preds.items()))[1]) > 2 else False
-        self.symmetrized = False
-        self.edges = [(int(i), int(j)) for i, j in preds.keys()]
-        # optimizable parameters
-        # model predicted data
-        pred_pts = [pred for pred in preds.values()]
-        pred1_pts = [pts[0]['pts3d'].squeeze(0) for pts in pred_pts]
-        pred2_pts = [pts[1]['pts3d'].squeeze(0) for pts in pred_pts] # if symmetrize, then we have [3]and[4] to generate more pairs
-        pred1_conf = [pts[0]['conf'].squeeze(0) for pts in pred_pts]
-        pred2_conf = [pts[1]['conf'].squeeze(0) for pts in pred_pts]
-        self.pred_pts_i = NoGradParamDict({ij: pred1_pts[n] for n, ij in enumerate(self.str_edges)})
-        self.pred_pts_j = NoGradParamDict({ij: pred2_pts[n] for n, ij in enumerate(self.str_edges)})
-        self.pred_conf_i = NoGradParamDict({ij: pred1_conf[n] for n, ij in enumerate(self.str_edges)})
-        self.pred_conf_j = NoGradParamDict({ij: pred2_conf[n] for n, ij in enumerate(self.str_edges)})
-        self.im_conf = self._compute_img_conf(pred1_conf, pred2_conf)
-        # utilized functions
         self.conf_trf = get_conf_trf(mode='log')
-        # The pair-wise prediction parameters
-        self.register_buffer('_weight_i', ParameterStack([self.conf_trf(self.pred_conf_i[i_j]) for i_j in self.str_edges])) # list to stack
+        self.H, self.W = pairs[0][0]['true_shape'][0]
+        self.known_intrinsics = intrinsics # Pin-hole camera model
+        self.edges = [(int(i), int(j)) for i, j in zip(preds['view1']['idx'], preds['view2']['idx'])]
+        self.fixed_indices = fixed_indices
+        self.fixed_poses = fixed_poses # camera-to-world (t,q) (qx,qy,qz,qw)
+
+        # fetch data from the prediction
+        _pred1_pts = [pts for pts in preds['pred1']['pts3d']]
+        _pred2_pts = [pts for pts in preds['pred2']['pts3d_in_other_view']]
+        _pred1_conf = [conf for conf in preds['pred1']['conf']]
+        _pred2_conf = [conf for conf in preds['pred2']['conf']]
+        self.pred_pts_i = NoGradParamDict({ij: _pred1_pts[n] for n, ij in enumerate(self.str_edges)})
+        self.pred_pts_j = NoGradParamDict({ij: _pred2_pts[n] for n, ij in enumerate(self.str_edges)})
+        self.pred_conf_i = NoGradParamDict({ij: _pred1_conf[n] for n, ij in enumerate(self.str_edges)})
+        self.pred_conf_j = NoGradParamDict({ij: _pred2_conf[n] for n, ij in enumerate(self.str_edges)})
+
+        self.imshapes, self.n_camera = self._get_imshapes()
+        im_areas = [h*w for h, w in self.imshapes]
+        self.max_area = max(im_areas)
+        self.im_conf = self._compute_img_conf(_pred1_conf, _pred2_conf)
+
+        # The pair-wise parameters, used as initialization
+        self.register_buffer('_weight_i', ParameterStack([self.conf_trf(self.pred_conf_i[i_j]) for i_j in self.str_edges]))
         self.register_buffer('_weight_j', ParameterStack([self.conf_trf(self.pred_conf_j[i_j]) for i_j in self.str_edges]))
         self.register_buffer('_stacked_pred_pts_i', ParameterStack(self.pred_pts_i, self.str_edges))
         self.register_buffer('_stacked_pred_pts_j', ParameterStack(self.pred_pts_j, self.str_edges))
         self.register_buffer('_ei', torch.tensor([i for i, j in self.edges]))
         self.register_buffer('_ej', torch.tensor([j for i, j in self.edges]))
-        im_shapes = [(self.H, self.W) for _ in range(self.known_cams + self.opt_cams)] # TODO: in fact, should align to the input image size
+        im_shapes = [(self.H, self.W) for _ in range(self.n_camera)]
         im_areas = [H * W for H, W in im_shapes]
         self.total_area_i = sum([im_areas[i] for i, j in self.edges])
         self.total_area_j = sum([im_areas[j] for i, j in self.edges])
 
-        # optimizable pair-wise alignment poses
-        self.pw_poses = nn.Parameter(torch.randn((self.n_edges, 1+self.POSE_DIM), device=device)) # [rotation, translation, scale] <-> [x, y, z, w, tx, ty, tz, scale], scale is the log scale
+        # optimizable parameters
+        self.pw_poses = nn.Parameter(torch.randn((self.n_edges, 1+self.POSE_DIM), device=device)) # [t;q;s](qx,qy,qz,qw)
+        self.im_depthmaps = nn.ParameterList(torch.randn(H, W)/10-3 for H, W in self.imshapes)  # log(depth)
+        self.im_poses = nn.ParameterList(torch.randn(self.POSE_DIM) for _ in range(self.n_camera))  # TODO: only the last camera pose will be optimized
 
-        # TODO: clean the code, no need to initialize from DROID now.
-        # initialize the last frame depth and pose for optimization
-        # use the `log` function to avoid the negative depth
-        self.opt_depths = nn.Parameter(torch.log(known_depths[-1].clone()).ravel())
+        # process the optimizable depth parameters
+        self.im_depthmaps = ParameterStack(self.im_depthmaps, is_param=True, fill=self.max_area) # store: `log(depth)`
         # known_poses: [translation, rotation] <-> [tx, ty, tz, x, y, z, w]; opt_pose: [rotation, translation] <-> [x, y, z, w, tx, ty, tz]
         # last_frame_cam2w = SE3(known_poses[-1]).inv().data
         # _opt_pose = last_frame_cam2w.clone()[[3, 4, 5, 6, 0, 1, 2]]
         # _opt_pose[4:7] = signed_log1p(_opt_pose[4:7])
-        self.opt_pose = nn.Parameter(torch.randn(self.POSE_DIM)) # opt_pose: [rotation, translation], and translation is the log scale
 
-        # rerun inspection
-        ### --------debug-------- ###
-        """"
-        self.rr_iter = 0
-        rr.init("debug")
-        rr.connect()
-        """
-        ### --------debug-------- ###
+        self.imgs = None
+        imgs = [torch.zeros((3,)+hw) for hw in self.imshapes]
+        for pair in pairs:
+            view1, view2 = pair
+            idx = view1['idx']
+            imgs[idx] = view1['img']
+            idx = view2['idx']
+            imgs[idx] = view2['img']
+        self.imgs = rgb(imgs)
 
-        # TODO: better organize the code
+        # initialize the scene structure and the camera parameters
         self.initialize_local_map_params()
 
+    def _get_imshapes(self):
+        n_imgs = max(max(e) for e in self.edges) + 1
+        imshapes = [None] * n_imgs
+        for e, (i, j) in enumerate(self.edges):
+            shape_i = tuple(self.pred_pts_i[f"{i}_{j}"].shape[0:2])
+            shape_j = tuple(self.pred_pts_j[f"{i}_{j}"].shape[0:2])
+            if imshapes[i]:
+                assert imshapes[i] == shape_i, f'incorrect shape for image {i}'
+            if imshapes[j]:
+                assert imshapes[j] == shape_j, f'incorrect shape for image {j}'
+            imshapes[i] = shape_i
+            imshapes[j] = shape_j
+        return imshapes, n_imgs
+
     def _set_pose(self, poses, i, R, T=None, scale=None, force=False):
-        # all poses == cam-to-world
+        # TODO: modify the order
         pose = poses[i]
 
         if R.shape == (4, 4):
@@ -236,10 +249,10 @@ class LocalBA(nn.Module):
             T = R[:3, 3]
             R = R[:3, :3]
 
-        if R is not None:
-            pose.data[0:4] = roma.rotmat_to_unitquat(R)
         if T is not None:
-            pose.data[4:7] = signed_log1p(T / (scale or 1))  # translation is function of scale
+            pose.data[0:3] = signed_log1p(T / (scale or 1))  # translation is function of scale
+        if R is not None:
+            pose.data[3:7] = roma.rotmat_to_unitquat(R) #[qx,qy,qz,qw]:https://naver.github.io/roma/index.html?highlight=rotmat_to_unitquat#roma.mappings.rotmat_to_unitquat
 
         if scale is not None:
             assert poses.shape[-1] in (8, 13)
@@ -248,42 +261,36 @@ class LocalBA(nn.Module):
 
     @torch.no_grad()
     def initialize_local_map_params(self):
-        """ Since gradient-based optimization method is sensitive to initial guess, we need to initialize the pw_poses instead of random values """
-        reference = self.get_fixed_pts3d()[:self.known_cams] # BxNx3
+        """ Initialize the scene structure and camera parameters """
+
+        idx = self._weight_i.sum(dim=-1).argmax() # use this as the seed of the initialization
+        pred1_idx_pts = self._stacked_pred_pts_i[idx]
+        pred2_idx_pts = self._stacked_pred_pts_j[idx]
+        # convert to the global coordinate, get the camera pose.
+        fixed_idx_pose = SE3(self.fixed_poses[idx]).matrix()
+
+        ref_i = geotrf(fixed_idx_pose, pred1_idx_pts)
+        ref_j = geotrf(fixed_idx_pose, pred2_idx_pts)
+        init_i, init_j = self.edges[idx]
+
         # align the pred_j to the reference to initialize the `pw_poses`
         for e, (i, j) in enumerate(self.edges):
-            # TODO
-            # Since currently we use the `ref-last_frame` prediction, the reference prediction is always the (j) in the (ij) pair
-            pred_j = self._stacked_pred_pts_j[j]
-            ref_j = reference[j]
-            # estimate the camera pose
-            R, T, s = roma.rigid_points_registration(pred_j, ref_j, weights=self._weight_j[j], compute_scaling=True)
+            pred_j = self._stacked_pred_pts_j[e]
+            # estimate the pair-wise camera pose
+            R, T, s = roma.rigid_points_registration(pred_j, ref_j, weights=self._weight_j[e], compute_scaling=True)
             self._set_pose(self.pw_poses, e, R, T, s)
 
-        ### initialize the optimized frame pose and depth map from the pair-wise prediction.
-        # average to get the initial optimized frame prediction.
         pw_poses = self.get_pw_poses()
         aligned_pred_i = geotrf(pw_poses, self._stacked_pred_pts_i)
-        # average by weights (note that weight is used by `log`)
-        confidence = self._weight_i.exp().unsqueeze(-1)
-        avg_points = torch.sum(aligned_pred_i * confidence, dim=0) / torch.sum(confidence, dim=0)
+        confidence_i = self._weight_i.exp().unsqueeze(-1)
 
-        # from the avg_points to initialize the camera pose and depth
-        # points, focal, mask, device
-        pnp_points = avg_points.view(self.H, self.W, 3)
-        pnp_focal = float(self.known_intrinsics[0]) # f,f,cx,cy
-        pnp_pp = torch.tensor([self.known_intrinsics[2], self.known_intrinsics[3]], device=self.device) # cx, cy
-        mean_conf = torch.mean(confidence, dim=0).squeeze()
-        pnp_mask = mean_conf > min(3.0, mean_conf.median()); pnp_mask=pnp_mask.view(self.H, self.W)
-        res = fast_pnp(pnp_points, pnp_focal, pp=pnp_pp, msk=pnp_mask, device=self.device, niter_PnP=10)
-        _, cam2world = res # camer-to-world (matrix)
-        # set the pose to initialize the optimized pose and depth
-        # DEBUG
-        self.opt_pose.data[0:4] = roma.rotmat_to_unitquat(cam2world[:3, :3])
-        self.opt_pose.data[4:7] = signed_log1p(cam2world[:3, 3])
-        depth = geotrf(inv(cam2world), pnp_points)[..., 2]
-        self.opt_depths.data[:] = depth.log().ravel().nan_to_num(neginf=0)
+        # [ ] Initialize the depth map; from the initial predicted point cloud, initialize each depths
+        for n in range(len(self.edges)):
+            s_n = self.pw_poses[n, -1].exp()
+            depth_n = self._stacked_pred_pts_i[n][:, 2] * s_n
+            self._set_depthmap(n, depth_n)
 
+        print("Finish initializing the map guess")
         return
 
     @property
@@ -295,38 +302,40 @@ class LocalBA(nn.Module):
         return [edge_str(i, j) for i, j in self.edges]
 
     def _get_poses(self, poses):
-        # normalize rotation
+        """ Get the un-scaled pose matrix from the translation and quaternion """
         if poses.dim() < 2:
             poses = poses[None]
-        Q = poses[:, :4]
-        T = signed_expm1(poses[:, 4:7])
+        Q = poses[:, 3:7]
+        T = signed_expm1(poses[:, 0:3])
         RT = roma.RigidUnitQuat(Q, T).normalize().to_homogeneous()
         return RT
 
+    def _set_depthmap(self, idx, depth, force=False):
+        param = self.im_depthmaps[idx]
+        if param.requires_grad or force:  # can only init a parameter not already initialized
+            param.data[:] = depth.log().nan_to_num(neginf=0)
+        return param
+
     @torch.no_grad()
     def _compute_img_conf(self, pred1_conf, pred2_conf):
-        im_conf = nn.ParameterList([torch.zeros(self.H, self.W, device=self.device) for i in range(self.known_cams + self.opt_cams)])
+        im_conf = nn.ParameterList([torch.zeros(self.H, self.W, device=self.device) for i in range(self.n_camera)])
         for e, (i, j) in enumerate(self.edges):
             im_conf[i] = torch.maximum(im_conf[i], pred1_conf[e])
             im_conf[j] = torch.maximum(im_conf[j], pred2_conf[e])
         return im_conf
 
     def get_pw_scale(self):
-        """ return the optimized scale of pair-wise prediction """
-        # since we have the reference depth map, the just return the optimized scale;
-        # due to the scale should always be positive, we use the exponential function
+        """ return the optimized scale of pair-wise prediction,
+            TODO: When fixing the camera poses, we do not need to limit the scale optimization ?
+        """
         return self.pw_poses[:, -1].exp()
 
     def get_pw_poses(self):
         """ get the pair-wise prediction poses"""
         RT = self._get_poses(self.pw_poses)
         scaled_RT = RT.clone()
-        scaled_RT[:, :3] *= self.get_pw_scale().view(-1, 1, 1)
+        scaled_RT[:, :3] *= self.get_pw_scale().view(-1, 1, 1) # s(Rx+T)
         return scaled_RT
-
-    def get_fixed_pts3d(self):
-        points = droid_backends.iproj(SE3(self.known_poses).inv().data, self.known_inv_depths, self.known_intrinsics) # BxHxWx3
-        return points.view(len(points), -1, 3)
 
     def get_opt_pose(self):
         RT = self._get_poses(self.opt_pose)
@@ -494,13 +503,6 @@ def mast3r_inference(images, cam_poses, inv_depths, RES, intrinsics, model, devi
     for i in range(N_images):
         depths[i] = depths[i].clamp(0, 2 * depths[i].median())
 
-    """
-    pcd = o3d.geometry.PointCloud()
-    points = droid_backends.iproj(SE3(cam_poses).inv().data, 1/depths, intrinsics)[-1].detach().cpu().numpy().reshape(-1, 3)
-    pcd.points = o3d.utility.Vector3dVector(points)
-    o3d.visualization.draw_geometries([pcd])
-    """
-
     with torch.enable_grad():
         scene = LocalBA(cam_poses, depths, out, intrinsics, device=device).to(device)
         # construct the optimizer and do the optimization loop
@@ -508,28 +510,50 @@ def mast3r_inference(images, cam_poses, inv_depths, RES, intrinsics, model, devi
     return scene
 
 def local_dust3r_ba(images, model, scene_graph='complete', prefilter='seq3', symmetrize=False, device='cuda',
-                     niter=200, schedule='cosine', lr=0.01):
+                     niter=300, schedule='cosine', lr=0.01):
     """
     The dust3r-like local bundle adjustment, use the dust3r model to predict the 3d points and then optimize the camera poses and depths.
     """
     images = format_images(images)
-    pairs = make_pairs(images, scene_graph=scene_graph, prefilter=prefilter, symmetrize=symmetrize)
-    out = paris_asymmetric_inference(pairs, model, device)
-    res = format_mast3r_out(pairs, out)
-    scene = global_aligner(res, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
-    loss = scene.compute_global_alignment(init="mst", niter=niter, schedule=schedule, lr=lr)
+    prefilter=None
+    pairs = make_pairs(images, scene_graph=scene_graph, prefilter=prefilter, symmetrize=True)
+    # out = paris_asymmetric_inference(pairs, model, device)
+    # res = format_mast3r_out(pairs, out)
+    out = inference(pairs, model, device, batch_size=1,verbose=True)
+    scene = global_aligner(out, device=device, mode=GlobalAlignerMode.PointCloudOptimizer)
+    loss = scene.compute_global_alignment(init='mst', niter=niter, schedule=schedule, lr=lr)
+    scene.show_modified()
     return scene
 
-def local_ba_flexible(images, model, scene_graph='oneref-9', prefilter=None, symmetrize=False,
-                      fixed_idx=None,
-                      device='cuda', niter=200, schedule='cosine', lr=0.01):
-    # [ ] Test the two image prediction
+def local_ba_flexible(images, model, scene_graph='oneref-9', prefilter=None,
+                      symmetrize=False, device='cuda', niter=300, schedule='cosine', lr=0.01,
+                      **kwargs):
     images = format_images(images)
-    pairs = make_pairs(images, scene_graph=scene_graph, prefilter=prefilter, symmetrize=symmetrize) # By default, the last image will be set as reference
+    scene_graph = 'complete'; prefilter=None
+    pairs = make_pairs(images, scene_graph=scene_graph, prefilter=prefilter, symmetrize=True) # The symmetrize will be placed at prediction
+    # if symmetrize:
+    #     out = paris_symmetric_inference(pairs, model, device)
+    # else:
+    #     out = paris_asymmetric_inference(pairs, model, device)
+    # res = format_mast3r_out(pairs, out)
+    res = inference(pairs, model, device, batch_size=1,verbose=True)
 
-    # preview the 3D in one image pair
-    # out = paris_symmetric_inference(pairs, model, device) # For symmetric pairs,
-    # input = pairs[0]
-    # sample = out[next(iter(out))]
-    # show_image_matching(sample[0], sample[1], input[0], input[1]) # inputs are normalized image
+    # for modular-optimizer
+    fixed_poses = SE3(kwargs['fixed_poses']).matrix()
+    # fixed_pose_masks = [i in kwargs['fixed_indices'] for i in range(len(images))]
+    # fixed_pose_masks = [True for i in range(len(images))]
+    fixed_pose_masks = [True, True, False, False, False, False, False, False, False, False]
+    intrinsic = kwargs['fixed_intrinsics'] # [fx, fy, cx, cy]
+    # construct the intrinsic matrix 3x3
+    fixed_intrinsics_mat = torch.tensor([[intrinsic[0], 0, intrinsic[2]], [0, intrinsic[1], intrinsic[3]], [0, 0, 1]], device=device).repeat(len(images), 1,1).cpu().numpy()
+    # fixed_intrinsic_masks = [True for i in range(len(images))] # all intrinsic will be known
+    fixed_intrinsic_masks = [True, True, False, False, False, False, False, False, False, False]
+    with torch.enable_grad():
+        # scene = LocalBA(kwargs['fixed_indices'], kwargs['fixed_poses'], pairs, res, kwargs['fixed_intrinsics'], device=device).to(device)
+        modular_scene = global_aligner(res, device=device, mode=GlobalAlignerMode.ModularPointCloudOptimizer, fx_and_fy=True)
+        # modular_scene.preset_pose(fixed_poses, fixed_pose_masks)
+        modular_scene.preset_intrinsics(fixed_intrinsics_mat, fixed_intrinsic_masks)
+        # loss = modular_scene.compute_global_alignment(init="knwon_poses_partial", niter=niter, schedule=schedule, lr=lr)
+        loss = modular_scene.compute_global_alignment(init="mst", niter=niter, schedule=schedule, lr=lr)
+    modular_scene.show_modified()
     return

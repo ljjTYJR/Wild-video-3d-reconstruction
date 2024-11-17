@@ -86,6 +86,8 @@ class BasePCOptimizer (nn.Module):
         self.conf_i = NoGradParamDict({ij: pred1_conf[n] for n, ij in enumerate(self.str_edges)})
         self.conf_j = NoGradParamDict({ij: pred2_conf[n] for n, ij in enumerate(self.str_edges)})
         self.im_conf = self._compute_img_conf(pred1_conf, pred2_conf)
+        for i in range(len(self.im_conf)):
+            self.im_conf[i].requires_grad = False
 
         # pairwise pose parameters
         self.base_scale = base_scale
@@ -236,43 +238,17 @@ class BasePCOptimizer (nn.Module):
     def get_depthmaps(self, raw=False):
         raise NotImplementedError()
 
-    @torch.no_grad()
-    def clean_pointcloud(self, tol=0.001, max_bad_conf=0):
-        """ Method:
-        1) express all 3d points in each camera coordinate frame
-        2) if they're in front of a depthmap --> then lower their confidence
-        """
-        assert 0 <= tol < 1
+    def clean_pointcloud(self, **kw):
         cams = inv(self.get_im_poses())
         K = self.get_intrinsics()
         depthmaps = self.get_depthmaps()
-        res = deepcopy(self)
+        all_pts3d = self.get_pts3d()
 
-        for i, pts3d in enumerate(self.depth_to_pts3d()):
-            for j in range(self.n_imgs):
-                if i == j:
-                    continue
+        new_im_confs = clean_pointcloud(self.im_conf, K, cams, depthmaps, all_pts3d, **kw)
 
-                # project 3dpts in other view
-                Hi, Wi = self.imshapes[i]
-                Hj, Wj = self.imshapes[j]
-                proj = geotrf(cams[j], pts3d[:Hi*Wi]).reshape(Hi, Wi, 3)
-                proj_depth = proj[:, :, 2]
-                u, v = geotrf(K[j], proj, norm=1, ncol=2).round().long().unbind(-1)
-
-                # check which points are actually in the visible cone
-                msk_i = (proj_depth > 0) & (0 <= u) & (u < Wj) & (0 <= v) & (v < Hj)
-                msk_j = v[msk_i], u[msk_i]
-
-                # find bad points = those in front but less confident
-                bad_points = (proj_depth[msk_i] < (1-tol) * depthmaps[j][msk_j]
-                              ) & (res.im_conf[i][msk_i] < res.im_conf[j][msk_j])
-
-                bad_msk_i = msk_i.clone()
-                bad_msk_i[msk_i] = bad_points
-                res.im_conf[i][bad_msk_i] = res.im_conf[i][bad_msk_i].clip_(max=max_bad_conf)
-
-        return res
+        for i, new_conf in enumerate(new_im_confs):
+            self.im_conf[i].data[:] = new_conf
+        return self
 
     def forward(self, ret_details=False):
         pw_poses = self.get_pw_poses()  # cam-to-world
@@ -312,6 +288,9 @@ class BasePCOptimizer (nn.Module):
         elif init == 'known_poses':
             init_fun.init_from_known_poses(self, min_conf_thr=self.min_conf_thr,
                                            niter_PnP=niter_PnP)
+        elif init == 'knwon_poses_partial':
+            init_fun.init_from_known_poses_partial(self, min_conf_thr=self.min_conf_thr,
+                                                   niter_PnP=niter_PnP)
         else:
             raise ValueError(f'bad value for {init=}')
 
@@ -350,53 +329,6 @@ class BasePCOptimizer (nn.Module):
                 pts = [geotrf(pw_poses[e], self.pred_i[edge_str(i, j)]) for e, (i, j) in enumerate(self.edges)]
                 viz.add_pointcloud(pts, (128, 0, 128))
 
-        """
-        # Test code, to generate an virtual image (not rendering, but just from pixels)
-        # 1. interpolate a virtual camera pose
-        test_camera_pose = im_poses[0] # the `1` camera is the reference camera
-        test_K = self.get_intrinsics()[0]
-        # 2. project the 3D points
-        pts = None
-        colors = None
-        for n in range(self.n_imgs):
-            pts3d = self.get_pts3d()[n]
-            mask = self.get_masks()[n]
-            color = self.imgs[n]
-            pts3d = to_numpy(pts3d)
-            mask = to_numpy(mask)
-            color = to_numpy(color)
-            if mask is None:
-                mask = [slice(None)] * len(pts3d)
-            pts_cur = np.concatenate([p[m] for p, m in zip(pts3d, mask)])
-            colors_cur = np.concatenate([c[m] for c, m in zip(color, mask)]) # [0,1]
-            pts = pts_cur if pts is None else np.concatenate([pts, pts_cur])
-            colors = colors_cur if colors is None else np.concatenate([colors, colors_cur])
-
-        # 3. fill the virtual image and save it
-        c2w = test_camera_pose
-        w2c = inv(c2w)
-        K = np.asarray(test_K.detach().cpu()); fx = K[0, 0]; fy = K[1, 1]; cx = K[0, 2]; cy = K[1, 2]
-        camera_points = w2c[:3,:3] @ pts.T + w2c[:3,3:4] #(3,N)
-
-        # project the 3d point cloud to the 2d image
-        pixel_x = (camera_points[0] * fx / camera_points[2] + cx).astype(int)
-        pixel_y = (camera_points[1] * fy / camera_points[2] + cy).astype(int)
-        # cat the pixel_x and pixel_y
-        pixel = np.stack([pixel_x, pixel_y], axis=1)
-        x_min = 0; x_max = cx * 2; y_min = 0; y_max = cy * 2
-        # remove the points that are out of the image and the corresponding colors
-        mask = (pixel[:,0] >= x_min) & (pixel[:,0] < x_max) & (pixel[:,1] >= y_min) & (pixel[:,1] < y_max)
-        pixel = pixel[mask]
-        colors = colors[mask]
-        # generate the image with the shape of (H, W, 3) -> (y_max, x_max, 3)
-        virtual_image = np.zeros((y_max.astype(int), x_max.astype(int), 3), dtype=np.float32)
-        virtual_image[pixel[:,1], pixel[:,0]] = colors
-        virtual_image = (virtual_image * 255.0).astype(np.uint8)
-        virtual_image = cv2.cvtColor(virtual_image, cv2.COLOR_RGB2BGR)
-        # save the virtual image
-        cv2.imwrite('virtual_image.png', virtual_image)
-        """
-
         viz.show(**kw)
         return viz
 
@@ -427,7 +359,6 @@ class BasePCOptimizer (nn.Module):
             mesh = trimesh.Trimesh(**cat_meshes(meshes))
             scene.add_geometry(mesh)
 
-
         # add each camera
         for i, pose_c2w in enumerate(cams2world):
             if isinstance(cam_color, list):
@@ -449,7 +380,7 @@ class BasePCOptimizer (nn.Module):
         scene.export(file_obj=outfile)
         print(f"Scene exported to {outfile}")
 
-        # scene.show(**kw)
+        scene.show(**kw)
 
 
 def global_alignment_loop(net, lr=0.01, niter=300, schedule='cosine', lr_min=1e-6):
@@ -465,15 +396,16 @@ def global_alignment_loop(net, lr=0.01, niter=300, schedule='cosine', lr_min=1e-
     lr_base = lr
     optimizer = torch.optim.Adam(params, lr=lr, betas=(0.9, 0.9))
 
+    loss = float('inf')
     if verbose:
         with tqdm.tqdm(total=niter) as bar:
             while bar.n < bar.total:
-                loss = global_alignment_iter(net, bar.n, niter, lr_base, lr_min, optimizer, schedule)
+                loss, lr = global_alignment_iter(net, bar.n, niter, lr_base, lr_min, optimizer, schedule)
                 bar.set_postfix_str(f'{lr=:g} loss={loss:g}')
                 bar.update()
     else:
         for n in range(niter):
-            loss = global_alignment_iter(net, n, niter, lr_base, lr_min, optimizer, schedule)
+            loss, _ = global_alignment_iter(net, n, niter, lr_base, lr_min, optimizer, schedule)
     return loss
 
 
@@ -491,7 +423,8 @@ def global_alignment_iter(net, cur_iter, niter, lr_base, lr_min, optimizer, sche
     loss.backward()
     optimizer.step()
 
-    return float(loss)
+    return float(loss), lr
+
 
 @torch.no_grad()
 def clean_pointcloud( im_confs, K, cams, depthmaps, all_pts3d,

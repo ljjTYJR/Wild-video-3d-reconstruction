@@ -4,14 +4,14 @@ import shutil
 import sys
 import torch
 import numpy as np
-sys.path.append('./')
+sys.path.append('../')
 # from hloc import extract_features, pairs_from_retrieval
 from hloc.utils.base_model import dynamic_load
 from hloc.utils.io import read_image
 from hloc import extractors
 
-IMG_DIR = '/media/shuo/T7/duslam/video_images/fpv3_10fps/failurecase2_1/images'
-OUTS_DIR = '/media/shuo/T7/duslam/video_images/fpv3_10fps/failurecase_2/net_vlad_outs'
+IMG_DIR = '/media/shuo/T7/duslam/video_images/temple/seq1/small_test/images'
+OUTS_DIR = 'tmp_output'
 WINODW_SIZE = 12
 retrieval_option = 'netvlad'
 TOPK=10
@@ -52,8 +52,7 @@ class RetrievalNetVLAD:
             self.img_buffer[idx] = img
             img_path = os.path.join(IMG_DIR, img)
             self.insert_img(idx, img_path)
-            if idx > 200:
-                query_indices = self.query(idx)
+            query_indices = self.query(idx)
 
     @torch.no_grad()
     def query(self, idx):
@@ -71,8 +70,9 @@ class RetrievalNetVLAD:
             val, indices = torch.topk(sim, TOPK, dim=0)
         # print the idx image and the topk images
         print(self.img_buffer[idx])
-        corrd_imgs = [self.img_buffer[potential_indices[i]] for i in indices]
-        print(corrd_imgs)
+        print(indices)
+        # corrd_imgs = [self.img_buffer[potential_indices[i]] for i in indices]
+        # print(corrd_imgs)
 
 
 

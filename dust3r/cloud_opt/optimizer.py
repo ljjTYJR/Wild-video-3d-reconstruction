@@ -7,6 +7,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import rerun as rr
 
 from dust3r.cloud_opt.base_opt import BasePCOptimizer
 from dust3r.utils.geometry import xy_grid, geotrf
@@ -19,7 +20,7 @@ class PointCloudOptimizer(BasePCOptimizer):
     Graph edges: observations = (pred1, pred2)
     """
 
-    def __init__(self, *args, optimize_pp=False, focal_break=20, same_focal=False, **kwargs):
+    def __init__(self, *args, optimize_pp=False, focal_break=20, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.has_im_poses = True  # by definition of this class
@@ -28,15 +29,8 @@ class PointCloudOptimizer(BasePCOptimizer):
         # adding thing to optimize
         self.im_depthmaps = nn.ParameterList(torch.randn(H, W)/10-3 for H, W in self.imshapes)  # log(depth)
         self.im_poses = nn.ParameterList(self.rand_pose(self.POSE_DIM) for _ in range(self.n_imgs))  # camera poses
-        self.shared_focal=same_focal
-        if same_focal:
-            # all images from the same camera, sharing the same intrinsic parameters
-            self.focal_init=False
-            H,W = self.imshapes[0] # since all images have same intrinsic, we use the first one enough
-            self.im_focal = nn.Parameter(torch.FloatTensor([self.focal_break*np.log(max(H, W))]))
-        else:
-            self.im_focals = nn.ParameterList(torch.FloatTensor(
-                [self.focal_break*np.log(max(H, W))]) for H, W in self.imshapes)  # camera intrinsics
+        self.im_focals = nn.ParameterList(torch.FloatTensor(
+            [self.focal_break*np.log(max(H, W))]) for H, W in self.imshapes)  # camera intrinsics
         self.im_pp = nn.ParameterList(torch.zeros((2,)) for _ in range(self.n_imgs))  # camera intrinsics
         self.im_pp.requires_grad_(optimize_pp)
 
@@ -47,10 +41,7 @@ class PointCloudOptimizer(BasePCOptimizer):
         # adding thing to optimize
         self.im_depthmaps = ParameterStack(self.im_depthmaps, is_param=True, fill=self.max_area)
         self.im_poses = ParameterStack(self.im_poses, is_param=True)
-        if self.shared_focal:
-            self.im_focal = SingleParameterSetting(self.im_focal, is_param=True)
-        else:
-            self.im_focals = ParameterStack(self.im_focals, is_param=True)
+        self.im_focals = ParameterStack(self.im_focals, is_param=True)
         self.im_pp = ParameterStack(self.im_pp, is_param=True)
         self.register_buffer('_pp', torch.tensor([(w/2, h/2) for h, w in self.imshapes]))
         self.register_buffer('_grid', ParameterStack(
@@ -69,6 +60,12 @@ class PointCloudOptimizer(BasePCOptimizer):
         self.register_buffer('_ej', torch.tensor([j for i, j in self.edges]))
         self.total_area_i = sum([im_areas[i] for i, j in self.edges])
         self.total_area_j = sum([im_areas[j] for i, j in self.edges])
+
+        # TODO
+        rr.init('dust3r_optimization')
+        rr.connect()
+        rr.set_time_sequence("#frame", 0)
+        self.rr_frame=0
 
     def _check_all_imgs_are_selected(self, msk):
         assert np.all(self._get_msk_indices(msk) == np.arange(self.n_imgs)), 'incomplete mask!'
@@ -129,29 +126,14 @@ class PointCloudOptimizer(BasePCOptimizer):
         assert tensor.requires_grad, 'it must be True at this point, otherwise no modification occurs'
 
     def _set_focal(self, idx, focal, force=False):
-        if self.shared_focal:
-            # if shared focal, we only need to set once
-            if self.focal_init:
-                return self.im_focal
-            else:
-                param = self.im_focal
-                if param.requires_grad or force:
-                    param.data[:] = self.focal_break * np.log(focal)
-                self.focal_init = True
-                return param
-        else:
-            param = self.im_focals[idx]
-            if param.requires_grad or force:  # can only init a parameter not already initialized
-                param.data[:] = self.focal_break * np.log(focal)
-            return param
+        param = self.im_focals[idx]
+        if param.requires_grad or force:  # can only init a parameter not already initialized
+            param.data[:] = self.focal_break * np.log(focal)
+        return param
 
     def get_focals(self):
-        if self.shared_focal:
-            log_focals = self.im_focal.expand(self.n_imgs, 1)
-            return (log_focals / self.focal_break).exp()
-        else:
-            log_focals = torch.stack(list(self.im_focals), dim=0)
-            return (log_focals / self.focal_break).exp()
+        log_focals = torch.stack(list(self.im_focals), dim=0)
+        return (log_focals / self.focal_break).exp()
 
     def get_known_focal_mask(self):
         return torch.tensor([not (p.requires_grad) for p in self.im_focals])
@@ -223,6 +205,8 @@ class PointCloudOptimizer(BasePCOptimizer):
         li = self.dist(proj_pts3d[self._ei], aligned_pred_i, weight=self._weight_i).sum() / self.total_area_i
         lj = self.dist(proj_pts3d[self._ej], aligned_pred_j, weight=self._weight_j).sum() / self.total_area_j
 
+        # cam_poses= self.get_im_poses()
+
         return li + lj
 
 
@@ -251,14 +235,6 @@ def ParameterStack(params, keys=None, is_param=None, fill=0):
         params = nn.Parameter(params)
         params.requires_grad_(requires_grad)
     return params
-
-def SingleParameterSetting(param, is_param=None, fill=0):
-    if fill > 0:
-        param = _ravel_hw(param, fill)
-    if is_param or param.requires_grad:
-        param = nn.Parameter(param)
-        param.requires_grad_(param.requires_grad)
-    return param
 
 
 def _ravel_hw(tensor, fill=0):

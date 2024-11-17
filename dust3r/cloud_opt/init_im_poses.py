@@ -19,6 +19,33 @@ from dust3r.viz import to_numpy
 
 from dust3r.cloud_opt.commons import edge_str, i_j_ij, compute_edge_scores
 
+import open3d as o3d
+def visualize_cameras_pts(poses, pts3d, known_poses_msk, known_poses):
+    n_camera = len(poses)
+    assert n_camera == len(pts3d)
+    pcd_all = o3d.geometry.PointCloud()
+    for pts in pts3d:
+        pcd = o3d.geometry.PointCloud()
+        pts = pts.cpu().numpy().reshape(-1, 3)
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        pcd_all += pcd
+    print("Load point clouds")
+    # visualize cameras
+    cameras = []
+    for pose in poses:
+        camera = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5)
+        camera.transform(pose.cpu().numpy())
+        cameras.append(camera)
+    print("Load cameras")
+    known_cameras = []
+    for msk, pose in zip(known_poses_msk, known_poses):
+        if msk:
+            camera = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
+            camera.transform(pose.cpu().numpy())
+            known_cameras.append(camera)
+    print("Load known cameras")
+    o3d.visualization.draw_geometries([pcd_all] + cameras + known_cameras)
+    return
 
 @torch.no_grad()
 def init_from_known_poses(self, niter_PnP=10, min_conf_thr=3):
@@ -62,6 +89,149 @@ def init_from_known_poses(self, niter_PnP=10, min_conf_thr=3):
         depth = self.pred_i[i_j][:, :, 2]
         self._set_depthmap(n, depth * scale)
 
+@torch.no_grad()
+def search_best_known_pair(self, known_msk):
+    idx0 = idx1 = None
+    known_indices = torch.where(known_msk)[0]
+    known_edges = []
+    for i in range(len(known_indices)):
+        for j in range(i+1, len(known_indices)):
+            known_edges.append((known_indices[i], known_indices[j]))
+    # search for the best pair
+    scores = compute_edge_scores(map(i_j_ij, known_edges), self.conf_i, self.conf_j)
+    idx0, idx1 = max(scores, key=scores.get)
+    return idx0.item(), idx1.item()
+
+@torch.no_grad()
+def init_from_known_poses_partial(self, niter_PnP=10, min_conf_thr=3, verbose=True):
+    """ init the scene when only part of cameras are known
+    """
+    nkp, known_poses_msk, known_poses = get_known_poses(self)
+    # Init with those True masks
+    nkf, known_focals_msk, known_focals = get_known_focals(self)
+    known_focals = known_focals.detach().cpu()[:,0] # for following usage
+    im_pp = self.get_principal_points()
+
+    # select the initial structure from the known poses
+    sparse_graph = -dict_to_sparse_graph(compute_edge_scores(map(i_j_ij, self.edges), self.conf_i, self.conf_j))
+    msp = sp.csgraph.minimum_spanning_tree(sparse_graph).tocoo()
+    idx0, idx1 = search_best_known_pair(self, known_poses_msk)
+    sparse_graph[idx0, idx1] = -np.inf
+    sparse_graph[idx1, idx0] = -np.inf
+    print(f'selecting fixed frame indices: {idx0=} {idx1=}')
+    msp = sp.csgraph.minimum_spanning_tree(sparse_graph).tocoo()
+    todo = sorted(zip(-msp.data, msp.row, msp.col))  # sorted edges
+
+    # temp variable to store 3d points
+    pts3d = [None] * len(self.imshapes)
+    im_poses = [None] * self.n_imgs
+    im_focals = [None] * self.n_imgs
+
+    # initialization
+    score, i, j = todo.pop()
+    if verbose:
+        print(f' init edge ({i}*,{j}*) {score=}')
+    i_j = edge_str(i, j)
+    pts3d[i] = geotrf(known_poses[i], self.pred_i[i_j].clone()) # Global coordination
+    # TODO:calculate the scale
+    pts3d[j] = geotrf(known_poses[i], self.pred_j[i_j].clone())
+    im_poses[i] = known_poses[i]; im_poses[j] = known_poses[j]
+    done = {i, j}
+    # initialize the im_poses and im_focals
+    while todo:
+        score, i, j = todo.pop()
+
+        if im_focals[i] is None:
+            if known_focals_msk[i]:
+                im_focals[i] = known_focals[i]
+            else:
+                im_focals[i] = estimate_focal(self.pred_i[edge_str(i, j)])
+
+        if i in done:
+            if verbose:
+                print(f' init edge ({i},{j}*) {score=}')
+            assert j not in done
+            # align pred[i] with pts3d[i], and then set j accordingly
+            i_j = edge_str(i, j)
+            s, R, T = rigid_points_registration(self.pred_i[i_j], pts3d[i], conf=self.conf_i[i_j])
+            trf = sRT_to_4x4(s, R, T, self.device)
+            pts3d[j] = geotrf(trf, self.pred_j[i_j])
+            done.add(j)
+
+            if self.has_im_poses and im_poses[i] is None:
+                if known_poses_msk[i]:
+                    im_poses[i] = known_poses[i]
+                else:
+                    im_poses[i] = sRT_to_4x4(1, R, T, self.device)
+
+        elif j in done:
+            if verbose:
+                print(f' init edge ({i}*,{j}) {score=}')
+            assert i not in done
+            i_j = edge_str(i, j)
+            s, R, T = rigid_points_registration(self.pred_j[i_j], pts3d[j], conf=self.conf_j[i_j])
+            trf = sRT_to_4x4(s, R, T, self.device)
+            pts3d[i] = geotrf(trf, self.pred_i[i_j])
+            done.add(i)
+
+            if self.has_im_poses and im_poses[i] is None:
+                if known_poses_msk[i]:
+                    im_poses[i] = known_poses[i]
+                else:
+                    im_poses[i] = sRT_to_4x4(1, R, T, self.device)
+
+        else:
+            # let's try again later
+            todo.insert(0, (score, i, j))
+
+    # complete missing information
+    pair_scores = list(sparse_graph.values())  # already negative scores: less is best
+    edges_from_best_to_worse = np.array(list(sparse_graph.keys()))[np.argsort(pair_scores)]
+    for i, j in edges_from_best_to_worse.tolist():
+        if im_focals[i] is None:
+            if known_focals_msk[i]:
+                im_focals[i] = known_focals[i]
+            else:
+                im_focals[i] = estimate_focal(self.pred_i[edge_str(i, j)])
+    for i in range(self.n_imgs):
+        if im_poses[i] is None:
+            if known_poses_msk[i]:
+                im_poses[i] = known_poses[i]
+            else:
+                msk = self.im_conf[i] > min_conf_thr
+                res = fast_pnp(pts3d[i], im_focals[i], msk=msk, device=self.device, niter_PnP=niter_PnP)
+                if res:
+                    im_focals[i], im_poses[i] = res
+        if im_poses[i] is None:
+            im_poses[i] = torch.eye(4, device=self.device)
+
+    # set all pairwise poses
+    for e, (i, j) in enumerate(self.edges):
+        i_j = edge_str(i, j)
+        # compute transform that goes from cam to world
+        s, R, T = rigid_points_registration(self.pred_i[i_j], pts3d[i], conf=self.conf_i[i_j])
+        self._set_pose(self.pw_poses, e, R, T, scale=s)
+
+    # take into account the scale normalization
+    s_factor = self.get_pw_norm_scale_factor()
+    if s_factor != 1:
+        im_poses[:, :3, 3] *= s_factor  # apply downscaling factor
+        for img_pts3d in pts3d:
+            img_pts3d *= s_factor
+
+    # init all image poses
+    if self.has_im_poses:
+        for i in range(self.n_imgs):
+            cam2world = im_poses[i]
+            depth = geotrf(inv(cam2world), pts3d[i])[..., 2]
+            self._set_depthmap(i, depth)
+            self._set_pose(self.im_poses, i, cam2world)
+            if im_focals[i] is not None:
+                self._set_focal(i, im_focals[i])
+
+    set_poses = self.get_im_poses()
+    visualize_cameras_pts(set_poses, pts3d, known_poses_msk, known_poses)
+    return
 
 @torch.no_grad()
 def init_minimum_spanning_tree(self, **kw):
@@ -115,6 +285,8 @@ def init_from_pts3d(self, pts3d, im_focals, im_poses):
             self._set_pose(self.im_poses, i, cam2world)
             if im_focals[i] is not None:
                 self._set_focal(i, im_focals[i])
+
+    # visualize_cameras_pts(set_poses, pts3d, known_poses_msk, known_poses)
 
     if self.verbose:
         print(' init loss =', float(self()))
@@ -299,7 +471,7 @@ def get_known_poses(self):
 
 def get_known_focals(self):
     if self.has_im_poses:
-        known_focal_msk = self.get_known_focal_mask()
+        known_focal_msk = torch.tensor([not (p.requires_grad) for p in self.im_focals])
         known_focals = self.get_focals()
         return known_focal_msk.sum(), known_focal_msk, known_focals
     else:

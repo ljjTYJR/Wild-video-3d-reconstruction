@@ -3,6 +3,7 @@ import tyro
 import torch
 import random
 import os
+import cv2
 import numpy as np
 from pathlib import Path
 from multiprocessing import Process, Queue
@@ -11,9 +12,10 @@ from evo.core.trajectory import PoseTrajectory3D
 from dpvo.dpvo import DPVO
 from dpvo.plot_utils import save_output_for_COLMAP
 from dpvo.stream import image_stream, video_stream, image_stream_limit
+from dpvo.lietorch import SE3
 
 from mast3r.model import AsymmetricMASt3R
-from mast3r.inference import local_ba_flexible
+from mast3r.inference import local_ba_flexible, local_dust3r_ba
 
 def fetch_dpvo_data(slam: DPVO):
     points, colors, (intrinsic, H, W) = slam.get_pts_clr_intri(inlier=True)
@@ -55,6 +57,7 @@ def main(
 
     frames = np.array(list(slam.inlier_ratio_record.keys()))
     n = 0
+    slam.image_buffer_ = torch.zeros(slam.mem, 3, slam.ht, slam.wd, dtype=torch.uint8, device="cuda")
     while 1:
         (t, image, intrinsics) = queue.get()
         if init_intrinsic is not None:
@@ -64,13 +67,12 @@ def main(
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if t == frames[n]:
-            print(f"Processing frame {t}")
+            print(f"Processing frame {t}", "n % slam.mem", n % slam.mem)
             inlier_ratio = slam.inlier_ratio_record[t]
 
             # buffer the input data
             slam.image_buffer_[n % slam.mem] = image
-
-            if inlier_ratio < 0.8:
+            if inlier_ratio < 0.80:
                 # initialize the optimization window and raw data, the `n` is just current `n`
                 print(f"frame{t} inlier ratio {inlier_ratio} < pre-set threshold")
                 if slam.mast3r_model == None:
@@ -81,8 +83,19 @@ def main(
                 N_buffer = 10
                 img_buffer = []
                 for i in range(1, N_buffer+1):
+                    print("fetch frame:", (n-N_buffer+i) % slam.mem)
                     img_buffer.append(slam.image_buffer_[(n-N_buffer+i) % slam.mem]) # BGR format
-                scene = local_ba_flexible(img_buffer, slam.mast3r_model)
+                fixed_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+                fixed_poses = [slam.poses_[n-N_buffer+i+1] for i in range(N_buffer)] # world-to-camera; [t,q](qx,qy,qz,qw)
+                fixed_poses = SE3(torch.stack(fixed_poses)).inv().data # camera-to-world [t,q](qx,qy,qz,qw)
+                fixed_intrinsics = intrinsics
+                prior_info = {
+                    'fixed_indices': fixed_indices,
+                    'fixed_poses': fixed_poses, # include all poses, we can select later.
+                    'fixed_intrinsics': fixed_intrinsics,
+                }
+                modular_scene = local_ba_flexible(img_buffer, slam.mast3r_model, **prior_info)
+                # scene = local_dust3r_ba(img_buffer, slam.mast3r_model)
             n += 1
 
     # (poses, tstamps), (points, colors, calib) = fetch_dpvo_data(slam)
@@ -91,5 +104,5 @@ def main(
     #     save_output_for_COLMAP(path, tstamps, trajectory, points, colors, True, *calib)
 
 if __name__ == "__main__":
-    seed_all()
+    # seed_all()
     tyro.cli(main)

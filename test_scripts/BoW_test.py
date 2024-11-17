@@ -15,7 +15,7 @@ except:
 
 NMS = 50 # Slow motion gets removed from keyframes anyway. So this is really the keyframe distance
 
-RAD = 30 # The idex difference smaller than this will be considered as the loop, otherwise, just a local window
+RAD = 15 # The idex difference smaller than this will be considered as the loop, otherwise, just a local window
 
 
 def _dbow_loop(in_queue, out_queue, vocab_path, ready):
@@ -37,7 +37,7 @@ class RetrievalDBOW:
         else:
             print("loading orb vocabulary from", vocab_path)
 
-        self.img_dir='/media/shuo/T7/duslam/video_images/fpv3_10fps/failurecase_2/images'
+        self.img_dir='/media/shuo/T7/duslam/video_images/temple/seq1/small_test/images'
         self.img_buffer = {}
         self.in_queue = Queue(maxsize=20)
         self.out_queue = Queue(maxsize=20)
@@ -77,5 +77,5 @@ class RetrievalDBOW:
         print(list(self.img_buffer))
 
 if __name__ == '__main__':
-    dow = RetrievalDBOW('checkpoints/ORBvoc.txt')
+    dow = RetrievalDBOW('../checkpoints/ORBvoc.txt')
     dow.main()
