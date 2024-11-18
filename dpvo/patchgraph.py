@@ -6,6 +6,7 @@ from . import projective_ops as pops
 from .lietorch import SE3
 # from .loop_closure.optim_utils import reduce_edges
 from .utils import *
+from .netvlad_retrieval import RetrievalNetVLAD
 
 
 class PatchGraph:
@@ -52,6 +53,10 @@ class PatchGraph:
         self.kk_inac = torch.as_tensor([], dtype=torch.long, device="cuda")
         self.weight_inac = torch.zeros(1, 0, 2, dtype=torch.long, device="cuda")
         self.target_inac = torch.zeros(1, 0, 2, dtype=torch.long, device="cuda")
+
+        # configuration of the loop closure
+        if cfg.LOCAL_LOOP:
+            self.local_loop_db = RetrievalNetVLAD(self.N)
 
     def edges_loop(self):
         """ Adding edges from old patches to new frames """

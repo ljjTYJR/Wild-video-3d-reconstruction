@@ -24,4 +24,7 @@ _C.MOTION_DAMPING = 0.5
 
 _C.MIXED_PRECISION = True
 
+# loop closure setting
+_C.LOCAL_LOOP = False
+
 cfg = _C

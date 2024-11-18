@@ -373,9 +373,9 @@ class DPVO:
         j = self.n - cur_key + 1
         m = self.motionmag(i, j) + self.motionmag(j, i)
 
+        k = self.n - cur_key
         if m / 2 < self.cfg.KEYFRAME_THRESH and self.motion_filter:
             print(f"drop frame {self.pg.tstamps_[self.n - cur_key].item()} due to low motion")
-            k = self.n - cur_key
             t0 = self.pg.tstamps_[k-1].item()
             t1 = self.pg.tstamps_[k].item()
 
@@ -401,19 +401,20 @@ class DPVO:
                 self.fmap1_[0,i%self.mem] = self.fmap1_[0,(i+1)%self.mem]
                 self.fmap2_[0,i%self.mem] = self.fmap2_[0,(i+1)%self.mem]
 
+                self.image_buffer_[i%self.mem] = self.image_buffer_[(i+1) % self.mem]
+
             self.n -= 1
             self.pg.m -= self.M
+        else:
+            if self.cfg.LOCAL_LOOP:
+                self.pg.local_loop_db.insert_img(k, self.image_buffer_[k % self.mem][[2, 1, 0], :, :]/255.0)
+                query_val, quer_indices = self.pg.local_loop_db.query(k)
 
-        # Only need to larger than the OPTIMIZATION_WINDOW?
+        """
         if self.n > self.cfg.OPTIMIZATION_WINDOW:
             ref_frame, inlier_ratio = self.geo_consistency_check(self.n-self.cfg.OPTIMIZATION_WINDOW+1, self.n-self.cfg.OPTIMIZATION_WINDOW)
-            """
-            if inlier_ratio < self.inlier_ratio_threshold:
-                # it means the current window of frames are with bad estimation, we need to switch to better estimation
-                # The last OPTIMIZATION_WINDOW frames will be reset by mast3r model, at the meantime, we need to maintain the structure.
-                # for the last frame in the window, the farest frame is `n-13`, we might need to shorten the range.
-            """
             self.inlier_ratio_record[self.pg.tstamps_[ref_frame].item()] = inlier_ratio.item()
+        """
         to_remove = self.ix[self.pg.kk] < self.n - self.cfg.REMOVAL_WINDOW
         self.remove_factors(to_remove)
 
@@ -584,6 +585,9 @@ class DPVO:
             if self.motion_probe() < 2.0:
                 self.pg.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
+            else:
+                if self.cfg.LOCAL_LOOP:
+                    self.pg.local_loop_db.insert_img(self.n, image[[2, 1, 0], :, :]/255.0) # (RGB; (3,h,w), [0,1])
 
         self.pg.n += 1
         self.pg.m += self.M
