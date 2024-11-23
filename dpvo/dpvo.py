@@ -551,7 +551,11 @@ class DPVO:
                 P1 = SE3(self.pg.poses_[self.n-1])
                 P2 = SE3(self.pg.poses_[self.n-2])
 
-                xi = self.cfg.MOTION_DAMPING * (P1 * P2.inv()).log()
+                # To deal with varying camera hz
+                *_, a,b,c = [1]*3 + self.tlist
+                fac = (c-b) / (b-a)
+                xi = self.cfg.MOTION_DAMPING * fac * (P1 * P2.inv()).log()
+
                 tvec_qvec = (SE3.exp(xi) * P1).data
                 self.pg.poses_[self.n] = tvec_qvec
             else:
