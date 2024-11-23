@@ -116,9 +116,9 @@ def run(
     import pickle
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
-    with open(f"{path}/dpvo.pkl", "wb") as f:
-        pickle.dump(slam, f)
-        f.close()
+    # with open(f"{path}/dpvo.pkl", "wb") as f:
+    #     pickle.dump(slam, f)
+    #     f.close()
 
     if save_reconstruction:
         points = slam.points_.cpu().numpy()[:slam.m]

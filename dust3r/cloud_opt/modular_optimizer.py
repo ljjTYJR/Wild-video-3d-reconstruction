@@ -50,6 +50,10 @@ class ModularPointCloudOptimizer (BasePCOptimizer):
         n_known_poses = sum((p.requires_grad is False) for p in self.im_poses)
         self.norm_pw_scale = (n_known_poses <= 1)
 
+        # also, check the depths
+        n_known_depths = sum((d.requires_grad is False) for d in self.im_depthmaps)
+        self.norm_pw_scale = (n_known_depths <= 0)
+
     def preset_intrinsics(self, known_intrinsics, msk=None):
         if isinstance(known_intrinsics, torch.Tensor) and known_intrinsics.ndim == 2:
             known_intrinsics = [known_intrinsics]
@@ -69,6 +73,15 @@ class ModularPointCloudOptimizer (BasePCOptimizer):
             if self.verbose:
                 print(f' (setting principal point #{idx} = {pp})')
             self._no_grad(self._set_principal_point(idx, pp, force=True))
+
+    def preset_depthmap(self, known_depthmaps, msk=None):
+        for idx, depth in zip(self._get_msk_indices(msk), known_depthmaps):
+            if self.verbose:
+                print(f' (setting depthmap #{idx})')
+            self._no_grad(self._set_depthmap(idx, depth, force=True))
+
+        n_known_depths = sum((d.requires_grad is False) for d in self.im_depthmaps)
+        self.norm_pw_scale = (n_known_depths <= 0)
 
     def _no_grad(self, tensor):
         return tensor.requires_grad_(False)

@@ -1,26 +1,22 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+import cv2
+import os
 
 from . import fastba
 from . import altcorr
 from . import lietorch
 from .lietorch import SE3
 from lightglue import SuperPoint
-
 from .net import VONet
 from .utils import *
 from .patchgraph import PatchGraph
 from . import projective_ops as pops
-import cv2
-import os
+from .dpvo_mast3r_init import dpvo_mast3r_initialization
 
-import rerun as rr
-
-from dust3r.inference import load_model
-from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
 from mast3r.model import AsymmetricMASt3R
-from mast3r.inference import local_dust3r_ba
+import rerun as rr
 
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
@@ -100,7 +96,6 @@ class DPVO:
             self.mast3r_model=AsymmetricMASt3R.from_pretrained(self.mast3r_model_path).to('cuda').eval()
         else:
             self.mast3r_model=None
-        self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
 
         self.motion_filter=motion_filter
         self.path = path
@@ -469,7 +464,7 @@ class DPVO:
         inlier_ratio = ((low_ropj_error & in_bounds).sum().float() / mask.sum().float()).cpu().numpy()
         return query_frame, inlier_ratio
 
-    def update(self):
+    def update(self, t0=None):
 
         with Timer("other", enabled=self.enable_timing):
             coords = self.reproject() # [B, N, 2, p, p] which indicates the corresponding tracks, it can be implemented by the pycolmap with mast3r initialization
@@ -488,8 +483,8 @@ class DPVO:
         self.pg.weight = weight
 
         with Timer("BA", enabled=self.enable_timing):
-            t0 = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
-            t0 = max(t0, 1) # means, t0 at least should be larger than 1, to keep one fixed
+            t0_ = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
+            t0 = max(t0_, t0 or 1)
 
             try:
                 fastba.BA(self.poses, self.patches, self.intrinsics,
@@ -634,13 +629,19 @@ class DPVO:
                 del self.mast3r_image_buffer
                 del self.mast3r_model
                 """
+            if self.mast3r_est:
+                mast3r_depths, mast3r_poses = dpvo_mast3r_initialization(self.image_buffer_[:self.warm_up], self.mast3r_model, intrinsics=self.pg.intrinsics_[:self.warm_up])
+                self.pg.init_from_prior(mast3r_depths, mast3r_poses, list(range(self.warm_up)))
+
+            # visualize the initialization
             for itr in range(12):
                 if self.rr:
                     self.rr_register_info(itr)
-                self.update()
+                self.update(t0=2) # we fix first two frames to get the scale
+
 
         elif self.is_initialized:
-            self.update()
+            self.update(t0=2)
             self.keyframe()
             if self.rr:
                 self.rr_register_info()

@@ -105,6 +105,7 @@ def search_best_known_pair(self, known_msk):
 @torch.no_grad()
 def init_from_known_poses_partial(self, niter_PnP=10, min_conf_thr=3, verbose=True):
     """ init the scene when only part of cameras are known
+    TODO: Not finished yet
     """
     nkp, known_poses_msk, known_poses = get_known_poses(self)
     # Init with those True masks
@@ -231,6 +232,7 @@ def init_from_known_poses_partial(self, niter_PnP=10, min_conf_thr=3, verbose=Tr
 
     set_poses = self.get_im_poses()
     visualize_cameras_pts(set_poses, pts3d, known_poses_msk, known_poses)
+    raise NotImplementedError("Not finished yet")
     return
 
 @torch.no_grad()
@@ -251,7 +253,19 @@ def init_from_pts3d(self, pts3d, im_focals, im_poses):
     # init poses
     nkp, known_poses_msk, known_poses = get_known_poses(self)
     if nkp == 1:
-        raise NotImplementedError("Would be simpler to just align everything afterwards on the single known pose")
+        nkd, known_depths_msk, known_depths = get_known_depthmaps(self)
+        if nkd == 1:
+            print("We will use the known scene structure to initialize the whole scene.")
+            # This is based on the assumption that the scale of the scene is relatively similar
+            known_pose = known_poses[known_poses_msk]
+            im_pose = im_poses[known_poses_msk]
+            # global rigid SE3 alignment, all are global poses
+            T = im_pose.inverse() @ known_pose
+            im_poses = T @ im_poses
+            for img_pts3d in pts3d:
+                img_pts3d[:] = geotrf(T.squeeze(0), img_pts3d)
+        else:
+            raise NotImplementedError("Would be simpler to just align everything afterwards on the single known pose")
     elif nkp > 1:
         # global rigid SE3 alignment
         s, R, T = align_multiple_poses(im_poses[known_poses_msk], known_poses[known_poses_msk])
@@ -262,6 +276,8 @@ def init_from_pts3d(self, pts3d, im_focals, im_poses):
         im_poses[:, :3, :3] /= s  # undo scaling on the rotation part
         for img_pts3d in pts3d:
             img_pts3d[:] = geotrf(trf, img_pts3d)
+
+    # visualize_cameras_pts(im_poses, pts3d, known_poses_msk, known_poses)
 
     # set all pairwise poses
     for e, (i, j) in enumerate(self.edges):
@@ -468,6 +484,10 @@ def get_known_poses(self):
     else:
         return 0, None, None
 
+def get_known_depthmaps(self):
+    known_depthmaps_msk = torch.tensor([not (p.requires_grad) for p in self.im_depthmaps])
+    known_depths = self.get_depthmaps()
+    return known_depthmaps_msk.sum(), known_depthmaps_msk, known_depths
 
 def get_known_focals(self):
     if self.has_im_poses:
@@ -487,3 +507,7 @@ def align_multiple_poses(src_poses, target_poses):
         return torch.cat((poses[:, :3, 3], poses[:, :3, 3] + eps*poses[:, :3, 2]))
     R, T, s = roma.rigid_points_registration(center_and_z(src_poses), center_and_z(target_poses), compute_scaling=True)
     return s, R, T
+
+def align_single_pose(src_pose, target_pose):
+    """ Align the src_pose with the target_pose """
+    return

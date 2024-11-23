@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 from einops import asnumpy, reduce, repeat
 
 from . import projective_ops as pops
@@ -7,6 +8,7 @@ from .lietorch import SE3
 # from .loop_closure.optim_utils import reduce_edges
 from .utils import *
 from .netvlad_retrieval import RetrievalNetVLAD
+from .utils import matrix_to_quaternion
 
 
 class PatchGraph:
@@ -25,8 +27,8 @@ class PatchGraph:
         self.N = self.cfg.BUFFER_SIZE
 
         self.tstamps_ = np.zeros(self.N, dtype=np.int64)
-        self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda")
-        self.patches_ = torch.zeros(self.N, self.M, 3, self.P, self.P, dtype=torch.float, device="cuda")
+        self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda") # NOTE: world2camera
+        self.patches_ = torch.zeros(self.N, self.M, 3, self.P, self.P, dtype=torch.float, device="cuda") # inverse depths
         self.intrinsics_ = torch.zeros(self.N, 4, dtype=torch.float, device="cuda")
 
         self.points_ = torch.zeros(self.N * self.M, 3, dtype=torch.float, device="cuda")
@@ -90,3 +92,40 @@ class PatchGraph:
     @property
     def ix(self):
         return self.index_.view(-1)
+
+    def init_from_prior(self, depths, poses, indices):
+        """ Init the depth and camera poses given known prior information (by indices)
+        @depths: (N, H, W) (full resolution, real depths)
+        @poses: (N, 4, 4) world camera poses
+        @indices: list of indices to be initialized
+        """
+        depths = torch.stack(depths, dim=0).unsqueeze(0)
+        interp_depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
+        dpvo_poses = create_se3_from_mat(poses).inv() # camera2world -> world2camera
+        self.poses_[indices] = dpvo_poses.data
+
+        for idx in indices:
+            patch = self.patches_[idx]
+            depth = interp_depths[idx]
+
+            # Extract coordinates and clamp in a batch
+            x_coords = torch.clamp(patch[:, 0, :, :].long(), 0, depth.shape[1] - 1)
+            y_coords = torch.clamp(patch[:, 1, :, :].long(), 0, depth.shape[0] - 1)
+
+            # Batch gather depths using advanced indexing
+            extracted_depths = depth[y_coords, x_coords]
+            median_depths = torch.median(extracted_depths.view(extracted_depths.shape[0], -1), dim=1).values
+
+            # Update the patch in one step
+            patch[:, 2, :, :] = 1 / median_depths.view(-1, 1, 1)
+
+            # Save the updated patch
+            self.patches_[idx] = patch
+
+def create_se3_from_mat(mats):
+    """ Create SE3 from 4x4 matrix """
+    Rs = mats[:, :3, :3]
+    Ts = mats[:, :3, 3]
+    quats = matrix_to_quaternion(Rs)[:, [1,2,3,0]] # (w, x,y,z)->(x,y,z,w)
+    poses = torch.cat([Ts, quats], dim=1)
+    return SE3(poses)

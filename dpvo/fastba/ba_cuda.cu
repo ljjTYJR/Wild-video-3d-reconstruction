@@ -53,7 +53,7 @@ adjSE3(const float *t, const float *q, const float *X, float *Y) {
   Y[5] += v[2];
 }
 
-__device__ void 
+__device__ void
 relSE3(const float *ti, const float *qi, const float *tj, const float *qj, float *tij, float *qij) {
   qij[0] = -qj[3] * qi[0] + qj[0] * qi[3] - qj[1] * qi[2] + qj[2] * qi[1],
   qij[1] = -qj[3] * qi[1] + qj[1] * qi[3] - qj[2] * qi[0] + qj[0] * qi[2],
@@ -66,7 +66,7 @@ relSE3(const float *ti, const float *qi, const float *tj, const float *qj, float
   tij[2] = tj[2] - tij[2];
 }
 
-  
+
 __device__ void
 expSO3(const float *phi, float* q) {
   // SO3 exponential map
@@ -96,7 +96,7 @@ crossInplace(const float* a, float *b) {
   float x[3] = {
     a[1]*b[2] - a[2]*b[1],
     a[2]*b[0] - a[0]*b[2],
-    a[0]*b[1] - a[1]*b[0], 
+    a[0]*b[1] - a[1]*b[0],
   };
 
   b[0] = x[0];
@@ -115,8 +115,8 @@ expSE3(const float *xi, float* t, float* q) {
   float theta_sq = phi[0]*phi[0] + phi[1]*phi[1] + phi[2]*phi[2];
   float theta = sqrtf(theta_sq);
 
-  t[0] = tau[0]; 
-  t[1] = tau[1]; 
+  t[0] = tau[0];
+  t[1] = tau[1];
   t[2] = tau[2];
 
   if (theta > 1e-4) {
@@ -141,7 +141,7 @@ retrSE3(const float *xi, const float* t, const float* q, float* t1, float* q1) {
 
   float dt[3] = {0, 0, 0};
   float dq[4] = {0, 0, 0, 1};
-  
+
   expSE3(xi, dt, dq);
 
   q1[0] = dq[3] * q[0] + dq[0] * q[3] + dq[1] * q[2] - dq[2] * q[1];
@@ -196,7 +196,7 @@ __global__ void patch_retr_kernel(
   GPU_1D_KERNEL_LOOP(n, index.size(0)) {
     const int p = patches.size(2);
     const int ix = index[n];
-  
+
     float d = patches[ix][2][0][0];
     d = d + update[n];
     d = (d > 20) ? 1.0 : d;
@@ -255,7 +255,7 @@ __global__ void reprojection_residuals_and_hessian(
     Xi[1] = (patches[kx][1][1][1] - cy) / fy;
     Xi[2] = 1.0;
     Xi[3] = patches[kx][2][1][1];
-    
+
     float tij[3], qij[4];
     relSE3(ti, qi, tj, qj, tij, qij);
     actSE3(tij, qij, Xi, Xj);
@@ -265,7 +265,7 @@ __global__ void reprojection_residuals_and_hessian(
     const float Z = Xj[2];
     const float W = Xj[3];
 
-    const float d = (Z >= 0.2) ? 1.0 / Z : 0.0; 
+    const float d = (Z >= 0.2) ? 1.0 / Z : 0.0; // what if Z is negative?
     const float d2 = d * d;
 
     const float x1 = fx * (X / Z) + cx;
@@ -325,10 +325,10 @@ __global__ void reprojection_residuals_and_hessian(
     {
       const float r = target[n][1] - y1;
       const float w = mask * weight[n][1];
-      
+
       float Jz = fy * (tij[1] * d - tij[2] * (Y * d2));
       float Ji[6], Jj[6] = {0, fy*W*d, fy*-Y*W*d2, fy*(-1-Y*Y*d2), fy*(X*Y*d2), fy*X*d};
-      
+
       adjSE3(tij, qij, Jj, Ji);
 
       for (int i=0; i<6; i++) {
@@ -400,7 +400,7 @@ __global__ void reproject(
     float Xi[4], Xj[4];
     for (int i=0; i<patches.size(2); i++) {
       for (int j=0; j<patches.size(3); j++) {
-        
+
         Xi[0] = (patches[kx][0][i][j] - cx) / fx;
         Xi[1] = (patches[kx][1][i][j] - cy) / fy;
         Xi[2] = 1.0;
@@ -427,7 +427,7 @@ std::vector<torch::Tensor> cuda_ba(
     torch::Tensor weight,
     torch::Tensor lmbda,
     torch::Tensor ii,
-    torch::Tensor jj, 
+    torch::Tensor jj,
     torch::Tensor kk,
     const int t0, const int t1, const int iterations)
 {
@@ -535,7 +535,7 @@ std::vector<torch::Tensor> cuda_ba(
           dZ.packed_accessor32<float,1,torch::RestrictPtrTraits>());
     }
   }
-  
+
   return {};
 }
 
@@ -545,7 +545,7 @@ torch::Tensor cuda_reproject(
     torch::Tensor patches,
     torch::Tensor intrinsics,
     torch::Tensor ii,
-    torch::Tensor jj, 
+    torch::Tensor jj,
     torch::Tensor kk)
 {
 

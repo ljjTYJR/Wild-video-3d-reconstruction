@@ -20,4 +20,4 @@ MIXED_PRECISION: True
 GRADIENT_BIAS: False
 
 # Loop closure
-LOCAL_LOOP: True
+LOCAL_LOOP: False

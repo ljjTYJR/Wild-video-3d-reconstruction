@@ -332,7 +332,7 @@ class BasePCOptimizer (nn.Module):
         viz.show(**kw)
         return viz
 
-    def show_modified(self, masking=True, cam_color=None, cam_size=0.03, as_pointcloud=False, transparent_cams=False, **kw):
+    def show_modified(self, masking=True, cam_color=None, cam_size=0.20, as_pointcloud=False, transparent_cams=False, **kw):
         rgbimg = self.imgs
         focals = self.get_focals().cpu()
         cams2world = self.get_im_poses().cpu()
