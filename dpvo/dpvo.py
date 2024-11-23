@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import cv2
 import os
+from matplotlib import pyplot as plt
 
 from . import fastba
 from . import altcorr
@@ -75,7 +76,7 @@ class DPVO:
         # feature pyramid
         self.pyramid = (self.fmap1_, self.fmap2_)
 
-        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, **kwargs)
+        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, self.M, **kwargs)
         self.warm_up = 10
 
         self.viewer = None
@@ -362,6 +363,86 @@ class DPVO:
         flow = pops.flow_mag(SE3(self.poses), self.patches, self.intrinsics, ii, jj, kk, beta=0.5)
         return flow.mean().item()
 
+    def draw_img_matching_coord(self, key_idx, query_num):
+        coords = self.reproject() # [B, N, 2, p, p]
+        key_img = cv2.cvtColor(self.image_buffer_[key_idx % self.mem].cpu().numpy().transpose(1, 2, 0), cv2.COLOR_BGR2RGB)
+        if query_num <= 3:
+            fig, axes = plt.subplots(query_num, 2, figsize=(15, 20))
+        else:
+            row = query_num // 2
+            col = 2
+            fig, axes = plt.subplots(row, col, figsize=(15, 20))
+        key_img_x = self.pg.patches_[key_idx][:, 0, self.P//2, self.P//2].cpu().numpy() * self.RES
+        key_img_y = self.pg.patches_[key_idx][:, 1, self.P//2, self.P//2].cpu().numpy() * self.RES
+        for ax_idx, ax in enumerate(axes.flat):
+            i = ax_idx + 1
+            tgt_idx = key_idx - i
+            tgt_idx_mem = (key_idx - i) if (key_idx - i >= 0) else (key_idx - i + self.mem)
+            tgt_img = cv2.cvtColor(self.image_buffer_[tgt_idx_mem % self.mem].cpu().numpy().transpose(1, 2, 0), cv2.COLOR_BGR2RGB)
+            indices = ((self.pg.ii == key_idx) & (self.pg.jj == tgt_idx)).nonzero().squeeze()
+            tgt_img_x = coords[0, indices, 0, self.P//2, self.P//2].cpu().numpy() * self.RES
+            tgt_img_y = coords[0, indices, 1, self.P//2, self.P//2].cpu().numpy() * self.RES
+            concat_img = np.concatenate((key_img, tgt_img), axis=1)
+            adjusted_tgt_x = tgt_img_x + key_img.shape[1]
+            ax.imshow(concat_img)
+            ax.scatter(key_img_x, key_img_y, c='red', s=15, edgecolor='black', label='Keyframe Pixels')
+            ax.scatter(adjusted_tgt_x, tgt_img_y, c='blue', s=15, edgecolor='black', label='Target Frame Pixels')
+            for j in range(len(key_img_x)):
+                ax.plot([key_img_x[j], adjusted_tgt_x[j]], [key_img_y[j], tgt_img_y[j]], color='green', linewidth=0.5)
+            ax.set_title(f'Image Pair {i}')
+            ax.axis('off')
+        plt.tight_layout()
+        plt.show(block=False)
+        plt.pause(0.1)
+        plt.close()
+
+    def draw_img_matching_target(self, key_idx, query_num):
+        coords = self.reproject() # [B, N, 2, p, p]
+        with torch.amp.autocast('cuda', enabled=True):
+            corr = self.corr(coords) # correleation
+            ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
+            _, (delta, weight, _) = \
+                self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
+        target = coords[...,self.P//2,self.P//2] + delta.float()
+        key_img = cv2.cvtColor(self.image_buffer_[key_idx % self.mem].cpu().numpy().transpose(1, 2, 0), cv2.COLOR_BGR2RGB)
+        if query_num <= 3:
+            fig, axes = plt.subplots(query_num, 2, figsize=(15, 20))
+        else:
+            row = query_num // 2
+            col = 2
+            fig, axes = plt.subplots(row, col, figsize=(15, 20))
+        key_img_x = self.pg.patches_[key_idx][:, 0, self.P//2, self.P//2].cpu().numpy() * self.RES
+        key_img_y = self.pg.patches_[key_idx][:, 1, self.P//2, self.P//2].cpu().numpy() * self.RES
+        for ax_idx, ax in enumerate(axes.flat):
+            i = ax_idx + 1
+            tgt_idx = key_idx - i
+            tgt_idx_mem = (key_idx - i) if (key_idx - i >= 0) else (key_idx - i + self.mem)
+            tgt_img = cv2.cvtColor(self.image_buffer_[tgt_idx_mem % self.mem].cpu().numpy().transpose(1, 2, 0), cv2.COLOR_BGR2RGB)
+            indices = ((self.pg.ii == key_idx) & (self.pg.jj == tgt_idx)).nonzero().squeeze()
+            tgt_img_x = target[0, indices, 0].cpu().numpy() * self.RES
+            tgt_img_y = target[0, indices, 1].cpu().numpy() * self.RES
+            tgt_weight_x = weight[0, indices, 0].cpu().numpy()
+            tgt_weight_y = weight[0, indices, 1].cpu().numpy()
+            concat_img = np.concatenate((key_img, tgt_img), axis=1)
+            adjusted_tgt_x = tgt_img_x + key_img.shape[1]
+            ax.imshow(concat_img)
+            ax.scatter(key_img_x, key_img_y, c='red', s=15, edgecolor='black', label='Keyframe Pixels')
+
+            tgt_weights = np.stack([tgt_weight_x, tgt_weight_y], axis=1)
+            tgt_weights_norm = np.linalg.norm(tgt_weights, axis=1)
+            scale = 1 / np.clip(tgt_weights_norm, 0.02, 1.0)
+
+            # ax.scatter(adjusted_tgt_x, tgt_img_y, c='blue', s=15, edgecolor='black', label='Target Frame Pixels')
+            ax.scatter(adjusted_tgt_x, tgt_img_y, c='blue', s=scale, edgecolor='black', label='Target Frame Pixels')
+            for j in range(len(key_img_x)):
+                ax.plot([key_img_x[j], adjusted_tgt_x[j]], [key_img_y[j], tgt_img_y[j]], color='green', linewidth=0.5)
+            ax.set_title(f'Image Pair {i}')
+            ax.axis('off')
+        plt.tight_layout()
+        plt.show(block=False)
+        plt.pause(0.1)
+        plt.close()
+
     def keyframe(self):
         cur_key = self.cfg.KEYFRAME_INDEX
         i = self.n - cur_key - 1
@@ -636,16 +717,16 @@ class DPVO:
             if self.mast3r_est:
                 mast3r_depths, mast3r_poses = dpvo_mast3r_initialization(self.image_buffer_[:self.warm_up], self.mast3r_model, intrinsics=self.pg.intrinsics_[:self.warm_up])
                 self.pg.init_from_prior(mast3r_depths, mast3r_poses, list(range(self.warm_up)))
+            # self.draw_img_matching_coord(6, 6)
 
-            # visualize the initialization
             for itr in range(12):
                 if self.rr:
                     self.rr_register_info(itr)
-                self.update(t0=2) # we fix first two frames to get the scale
-
+                # self.draw_img_matching_target(6, 6)
+                self.update() # we fix first two frames to get the scale
 
         elif self.is_initialized:
-            self.update(t0=2)
+            self.update()
             self.keyframe()
             if self.rr:
                 self.rr_register_info()

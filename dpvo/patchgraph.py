@@ -14,7 +14,7 @@ from .utils import matrix_to_quaternion
 class PatchGraph:
     """ Dataclass for storing variables """
 
-    def __init__(self, cfg, P, DIM, pmem, **kwargs):
+    def __init__(self, cfg, P, DIM, pmem, M, **kwargs):
         self.cfg = cfg
         self.P = P
         self.pmem = pmem
@@ -24,6 +24,7 @@ class PatchGraph:
         self.m = 0      # number of patches
 
         self.M = self.cfg.PATCHES_PER_FRAME
+        self.M = M
         self.N = self.cfg.BUFFER_SIZE
 
         self.tstamps_ = np.zeros(self.N, dtype=np.int64)

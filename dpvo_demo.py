@@ -27,6 +27,14 @@ def show_image(image, t=0):
     cv2.imshow('image', image / 255.0)
     cv2.waitKey(t)
 
+def int_or_none(value):
+    if value.lower() == 'none':
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid integer or 'None': {value}")
+
 def seed_all(seed=0):
     """Set seed for reproducibility."""
     torch.manual_seed(seed)
@@ -51,7 +59,8 @@ def run(
     mast3r=False,
     colmap_init=False,
     motion_filter=False,
-    path=None):
+    path=None,
+    end=None):
 
     slam = None
     queue = Queue(maxsize=8)
@@ -83,7 +92,7 @@ def run(
         reader.join()
 
     if os.path.isdir(imagedir):
-        reader = Process(target=image_stream, args=(queue, imagedir, calib, stride, skip))
+        reader = Process(target=image_stream, args=(queue, imagedir, calib, stride, skip, end))
     else:
         reader = Process(target=video_stream, args=(queue, imagedir, calib, stride, skip))
 
@@ -143,7 +152,6 @@ if __name__ == '__main__':
     parser.add_argument('--imagedir', type=str)
     parser.add_argument('--calib', type=str)
     parser.add_argument('--stride', type=int, default=1)
-    parser.add_argument('--skip', type=int, default=0)
     parser.add_argument('--buffer', type=int, default=1024)
     parser.add_argument('--config', default="dpvo_configs/default.yaml")
     parser.add_argument('--mast3r', action="store_true")
@@ -156,6 +164,8 @@ if __name__ == '__main__':
     parser.add_argument('--motion_filter', action="store_true")
     parser.add_argument('--export_colmap', action="store_true")
     parser.add_argument('--set_seed', action="store_true")
+    parser.add_argument('--skip', type=int, default=0)
+    parser.add_argument('--end', type=int_or_none, default=None)
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
@@ -179,7 +189,7 @@ if __name__ == '__main__':
     path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}")
 
     (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-                    args.mast3r, args.colmap_init, args.motion_filter, path)
+                    args.mast3r, args.colmap_init, args.motion_filter, path, args.end)
     name = Path(args.imagedir).stem
     trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)
 
