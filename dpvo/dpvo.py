@@ -637,6 +637,8 @@ class DPVO:
                 fac = (c-b) / (b-a)
                 xi = self.cfg.MOTION_DAMPING * fac * (P1 * P2.inv()).log()
 
+                # xi = self.cfg.MOTION_DAMPING * (P1 * P2.inv()).log()
+
                 tvec_qvec = (SE3.exp(xi) * P1).data
                 self.pg.poses_[self.n] = tvec_qvec
             else:
@@ -723,10 +725,16 @@ class DPVO:
                 if self.rr:
                     self.rr_register_info(itr)
                 # self.draw_img_matching_target(6, 6)
-                self.update() # we fix first two frames to get the scale
+                if self.mast3r_est:
+                    self.update(t0=4) # we fix first two frames to get the scale
+                else:
+                    self.update()
 
         elif self.is_initialized:
-            self.update()
+            if self.mast3r_est:
+                self.update(t0=4)
+            else:
+                self.update()
             self.keyframe()
             if self.rr:
                 self.rr_register_info()
