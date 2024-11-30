@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 from . import fastba
 from . import altcorr
 from . import lietorch
+from . import ba
 from .lietorch import SE3
 from lightglue import SuperPoint
 from .net import VONet
@@ -578,9 +579,18 @@ class DPVO:
             t0_ = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
             t0 = max(t0_, t0 or 1)
 
+            # try:
+                # fastba.BA(self.poses, self.patches, self.intrinsics,
+                #     target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
+
+            # if using Python-version BA
             try:
-                fastba.BA(self.poses, self.patches, self.intrinsics,
-                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
+                bounds = [0, 0, self.wd, self.ht]
+                lmbda=1e-4
+                Gs, patches = ba.BA(SE3(self.poses), self.patches, self.intrinsics,
+                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, bounds, fixedp=t0)
+                self.pg.patches_[:] = patches.reshape(self.N, self.M, 3, self.P, self.P)
+                self.pg.poses_[:] = Gs.vec().reshape(self.N, 7)
             except:
                 print("Warning BA failed...")
 

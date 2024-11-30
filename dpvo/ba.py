@@ -108,7 +108,7 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
     if PRINT:
         print((r * v[...,None]).norm(dim=-1).mean().item())
 
-    r = (v[...,None] * r).unsqueeze(dim=-1)    
+    r = (v[...,None] * r).unsqueeze(dim=-1)
     weights = (v[...,None] * weights).unsqueeze(dim=-1)
 
     wJiT = (weights * Ji).transpose(2,3)
@@ -143,7 +143,7 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
         safe_scatter_add_mat(Bjj, jj, jj, n, n).view(b, n, n, 6, 6)
 
     E = safe_scatter_add_mat(Eik, ii, kk, n, m).view(b, n, m, 6, 1) + \
-        safe_scatter_add_mat(Ejk, jj, kk, n, m).view(b, n, m, 6, 1) 
+        safe_scatter_add_mat(Ejk, jj, kk, n, m).view(b, n, m, 6, 1)
 
     C = safe_scatter_add_vec(torch.matmul(wJzT, Jz), kk, m)
 
@@ -154,9 +154,9 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
 
     if isinstance(lmbda, torch.Tensor):
         lmbda = lmbda.reshape(*C.shape)
-        
+
     Q = 1.0 / (C + lmbda)
-    
+
     ### solve w/ schur complement ###
     EQ = E * Q[:,None]
 
