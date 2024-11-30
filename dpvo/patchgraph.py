@@ -9,12 +9,12 @@ from .lietorch import SE3
 from .utils import *
 from .netvlad_retrieval import RetrievalNetVLAD
 from .utils import matrix_to_quaternion
-
+import droid_backends
 
 class PatchGraph:
     """ Dataclass for storing variables """
 
-    def __init__(self, cfg, P, DIM, pmem, M, **kwargs):
+    def __init__(self, cfg, P, DIM, pmem, M, ht_resized, wd_resized, **kwargs):
         self.cfg = cfg
         self.P = P
         self.pmem = pmem
@@ -57,6 +57,9 @@ class PatchGraph:
         self.weight_inac = torch.zeros(1, 0, 2, dtype=torch.long, device="cuda")
         self.target_inac = torch.zeros(1, 0, 2, dtype=torch.long, device="cuda")
 
+        self.ht_resized = ht_resized
+        self.wd_resized = wd_resized
+
         # configuration of the loop closure
         if cfg.LOCAL_LOOP:
             self.local_loop_db = RetrievalNetVLAD(self.N)
@@ -94,16 +97,20 @@ class PatchGraph:
     def ix(self):
         return self.index_.view(-1)
 
-    def init_from_prior(self, depths, poses, indices):
+    def init_from_prior(self, depths, poses, indices, images=None):
         """ Init the depth and camera poses given known prior information (by indices)
         @depths: (N, H, W) (full resolution, real depths)
         @poses: (N, 4, 4) world camera poses
         @indices: list of indices to be initialized
         """
         depths = torch.stack(depths, dim=0).unsqueeze(0)
-        interp_depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
+        B, N, H, W = depths.shape
+        if W > self.wd_resized:
+            interp_depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
+        else:
+            interp_depths = depths.squeeze()
         dpvo_poses = create_se3_from_mat(poses).inv() # camera2world -> world2camera
-        self.poses_[indices] = dpvo_poses.data
+        # points = droid_backends.iproj(dpvo_poses.inv().data, 1/interp_depths, self.intrinsics_[0]).cpu()
 
         for idx in indices:
             patch = self.patches_[idx]
@@ -122,6 +129,7 @@ class PatchGraph:
 
             # Save the updated patch
             self.patches_[idx] = patch
+            self.poses_[idx] = dpvo_poses[idx].data
 
 def create_se3_from_mat(mats):
     """ Create SE3 from 4x4 matrix """

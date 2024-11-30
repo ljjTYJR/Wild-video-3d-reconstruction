@@ -6,14 +6,14 @@
 # --------------------------------------------------------
 import numpy as np
 import torch
+# from mast3r.retrieval.graph import make_pairs_fps
 
-
-def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True):
+def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True, sim_mat=None):
     pairs = []
     if scene_graph == 'complete':  # complete graph
         for i in range(len(imgs)):
             for j in range(i):
-                pairs.append((imgs[j], imgs[i]))
+                pairs.append((imgs[i], imgs[j]))
     elif scene_graph.startswith('swin'):
         iscyclic = not scene_graph.endswith('noncyclic')
         try:
@@ -55,6 +55,9 @@ def make_pairs(imgs, scene_graph='complete', prefilter=None, symmetrize=True):
         for j in range(len(imgs)):
             if j != refid:
                 pairs.append((imgs[refid], imgs[j]))
+    else:
+        raise ValueError(f'unrecognized value for {scene_graph=}')
+
     if symmetrize:
         pairs += [(img2, img1) for img1, img2 in pairs]
 
@@ -79,13 +82,13 @@ def sel(x, kept):
 
 def _filter_edges_seq(edges, seq_dis_thr, cyclic=False):
     # number of images
-    n = max(max(e) for e in edges)+1
+    n = max(max(e) for e in edges) + 1
 
     kept = []
     for e, (i, j) in enumerate(edges):
-        dis = abs(i-j)
+        dis = abs(i - j)
         if cyclic:
-            dis = min(dis, abs(i+n-j), abs(i-n-j))
+            dis = min(dis, abs(i + n - j), abs(i - n - j))
         if dis <= seq_dis_thr:
             kept.append(e)
     return kept

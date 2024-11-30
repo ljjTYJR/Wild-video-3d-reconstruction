@@ -186,7 +186,7 @@ if __name__ == '__main__':
     logger.info(cfg)
 
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}")
+    path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}_{args.skip}_{args.end}")
 
     (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
                     args.mast3r, args.colmap_init, args.motion_filter, path, args.end)

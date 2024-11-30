@@ -19,7 +19,7 @@ def iproj(disps, intrinsics, jacobian=False):
     """ pinhole camera inverse projection """
     ht, wd = disps.shape[2:]
     fx, fy, cx, cy = extract_intrinsics(intrinsics)
-    
+
     y, x = torch.meshgrid(
         torch.arange(ht).to(disps.device).float(),
         torch.arange(wd).to(disps.device).float())
@@ -67,7 +67,7 @@ def proj(Xs, intrinsics, jacobian=False, return_depth=False):
 def actp(Gij, X0, jacobian=False):
     """ action on point cloud """
     X1 = Gij[:,:,None,None] * X0
-    
+
     if jacobian:
         X, Y, Z, d = X1.unbind(dim=-1)
         o = torch.zeros_like(d)
@@ -76,7 +76,7 @@ def actp(Gij, X0, jacobian=False):
         if isinstance(Gij, SE3):
             Ja = torch.stack([
                 d,  o,  o,  o,  Z, -Y,
-                o,  d,  o, -Z,  o,  X, 
+                o,  d,  o, -Z,  o,  X,
                 o,  o,  d,  Y, -X,  o,
                 o,  o,  o,  o,  o,  o,
             ], dim=-1).view(B, N, H, W, 4, 6)
@@ -98,13 +98,13 @@ def projective_transform(poses, depths, intrinsics, ii, jj, jacobian=False, retu
 
     # inverse project (pinhole)
     X0, Jz = iproj(depths[:,ii], intrinsics[:,ii], jacobian=jacobian)
-    
+
     # transform
     Gij = poses[:,jj] * poses[:,ii].inv()
 
     Gij.data[:,ii==jj] = torch.as_tensor([-0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], device="cuda")
     X1, Ja = actp(Gij, X0, jacobian=jacobian)
-    
+
     # project (pinhole)
     x1, Jp = proj(X1, intrinsics[:,jj], jacobian=jacobian, return_depth=return_depth)
 

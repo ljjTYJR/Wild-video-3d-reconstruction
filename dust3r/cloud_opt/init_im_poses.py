@@ -44,7 +44,7 @@ def visualize_cameras_pts(poses, pts3d, known_poses_msk, known_poses):
             camera.transform(pose.cpu().numpy())
             known_cameras.append(camera)
     print("Load known cameras")
-    o3d.visualization.draw_geometries([pcd_all] + cameras + known_cameras)
+    # o3d.visualization.draw_geometries([pcd_all] + cameras + known_cameras)
     return
 
 @torch.no_grad()
@@ -96,9 +96,16 @@ def search_best_known_pair(self, known_msk):
     known_edges = []
     for i in range(len(known_indices)):
         for j in range(i+1, len(known_indices)):
-            known_edges.append((known_indices[i], known_indices[j]))
-    # search for the best pair
+            # known_edges.append((known_indices[i], known_indices[j]))
+            if (known_indices[i], known_indices[j]) in self.edges:
+                known_edges.append((known_indices[i], known_indices[j]))
+            elif (known_indices[j], known_indices[i]) in self.edges:
+                known_edges.append((known_indices[j], known_indices[i]))
+            else:
+                continue
+
     scores = compute_edge_scores(map(i_j_ij, known_edges), self.conf_i, self.conf_j)
+
     idx0, idx1 = max(scores, key=scores.get)
     return idx0.item(), idx1.item()
 
@@ -132,7 +139,9 @@ def init_from_known_poses_partial(self, niter_PnP=10, min_conf_thr=3, verbose=Tr
     score, i, j = todo.pop()
     if verbose:
         print(f' init edge ({i}*,{j}*) {score=}')
-    i_j = edge_str(i, j)
+    # TODO: workaround
+    i_j = edge_str(i, j) if i < j else edge_str(j, i)
+    # i_j = edge_str(i, j)
     pts3d[i] = geotrf(known_poses[i], self.pred_i[i_j].clone()) # Global coordination
     # TODO:calculate the scale
     pts3d[j] = geotrf(known_poses[i], self.pred_j[i_j].clone())
@@ -232,7 +241,7 @@ def init_from_known_poses_partial(self, niter_PnP=10, min_conf_thr=3, verbose=Tr
 
     set_poses = self.get_im_poses()
     visualize_cameras_pts(set_poses, pts3d, known_poses_msk, known_poses)
-    raise NotImplementedError("Not finished yet")
+    # raise NotImplementedError("Not finished yet")
     return
 
 @torch.no_grad()
@@ -277,6 +286,7 @@ def init_from_pts3d(self, pts3d, im_focals, im_poses):
         for img_pts3d in pts3d:
             img_pts3d[:] = geotrf(trf, img_pts3d)
 
+    # For debugging
     # visualize_cameras_pts(im_poses, pts3d, known_poses_msk, known_poses)
 
     # set all pairwise poses

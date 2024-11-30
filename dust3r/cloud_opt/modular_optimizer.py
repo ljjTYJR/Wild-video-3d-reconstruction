@@ -52,7 +52,7 @@ class ModularPointCloudOptimizer (BasePCOptimizer):
 
         # also, check the depths
         n_known_depths = sum((d.requires_grad is False) for d in self.im_depthmaps)
-        self.norm_pw_scale = (n_known_depths <= 0)
+        self.norm_pw_scale = self.norm_pw_scale & (n_known_depths <= 0)
 
     def preset_intrinsics(self, known_intrinsics, msk=None):
         if isinstance(known_intrinsics, torch.Tensor) and known_intrinsics.ndim == 2:

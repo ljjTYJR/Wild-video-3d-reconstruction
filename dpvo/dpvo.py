@@ -14,7 +14,7 @@ from .net import VONet
 from .utils import *
 from .patchgraph import PatchGraph
 from . import projective_ops as pops
-from .dpvo_mast3r_init import dpvo_mast3r_initialization
+from .dpvo_mast3r_init import dpvo_mast3r_initialization, dpvo_mast3r_optimization
 
 from mast3r.model import AsymmetricMASt3R
 import rerun as rr
@@ -76,7 +76,7 @@ class DPVO:
         # feature pyramid
         self.pyramid = (self.fmap1_, self.fmap2_)
 
-        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, self.M, **kwargs)
+        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, self.M, ht, wd, **kwargs)
         self.warm_up = 10
 
         self.viewer = None
@@ -369,7 +369,7 @@ class DPVO:
         if query_num <= 3:
             fig, axes = plt.subplots(query_num, 2, figsize=(15, 20))
         else:
-            row = query_num // 2
+            row = 3
             col = 2
             fig, axes = plt.subplots(row, col, figsize=(15, 20))
         key_img_x = self.pg.patches_[key_idx][:, 0, self.P//2, self.P//2].cpu().numpy() * self.RES
@@ -443,7 +443,7 @@ class DPVO:
         plt.pause(0.1)
         plt.close()
 
-    def keyframe(self):
+    def keyframe(self, mast3r_update=True):
         cur_key = self.cfg.KEYFRAME_INDEX
         i = self.n - cur_key - 1
         j = self.n - cur_key + 1
@@ -485,6 +485,17 @@ class DPVO:
             if self.cfg.LOCAL_LOOP:
                 self.pg.local_loop_db.insert_img(k, self.image_buffer_[k % self.mem][[2, 1, 0], :, :]/255.0)
                 query_val, quer_indices = self.pg.local_loop_db.query(k)
+
+            if mast3r_update and self.mast3r_est:
+                # Use the mast3r model to give the coarse camera poses estimation (only 3D-3D correspondence)
+                if k > self.cfg.PATCH_LIFETIME:
+                    # make use of prior poses as seeds to do the initializatioin
+                    img_idx0 = k-self.cfg.PATCH_LIFETIME
+                    img_idx1 = k+1
+                    # img_idx1 = k-7
+                    images = [self.image_buffer_[i % self.mem] for i in range(img_idx0, img_idx1)]
+                    poses = [SE3(self.pg.poses_[i]) for i in range(img_idx0, img_idx1)]
+                    dpvo_mast3r_optimization(images, poses, pts=None, mast3r_model=self.mast3r_model, fixed=2, intrinsics=self.pg.intrinsics_[img_idx0:img_idx1])
 
         """
         if self.n > self.cfg.OPTIMIZATION_WINDOW:
@@ -718,7 +729,7 @@ class DPVO:
                 """
             if self.mast3r_est:
                 mast3r_depths, mast3r_poses = dpvo_mast3r_initialization(self.image_buffer_[:self.warm_up], self.mast3r_model, intrinsics=self.pg.intrinsics_[:self.warm_up])
-                self.pg.init_from_prior(mast3r_depths, mast3r_poses, list(range(self.warm_up)))
+                self.pg.init_from_prior(mast3r_depths, mast3r_poses, list(range(self.warm_up)), images=self.image_buffer_[:self.warm_up])
             # self.draw_img_matching_coord(6, 6)
 
             for itr in range(12):
@@ -735,7 +746,7 @@ class DPVO:
                 self.update(t0=4)
             else:
                 self.update()
-            self.keyframe()
+            self.keyframe(mast3r_update=False)
             if self.rr:
                 self.rr_register_info()
 

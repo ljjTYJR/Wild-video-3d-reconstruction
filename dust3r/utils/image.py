@@ -21,7 +21,18 @@ except ImportError:
     heif_support_enabled = False
 
 ImgNorm = tvf.Compose([tvf.ToTensor(), tvf.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+tvf_to_pil = tvf.ToPILImage()
+tvf_to_tensor = tvf.ToTensor()
 
+def resize_image(images, size):
+    resize_transform = tvf.Resize(size, interpolation=tvf.InterpolationMode.LANCZOS)
+    res=[]
+    for img in images:
+        pil_image = tvf_to_pil(img)
+        pil_resized = pil_image.resize(size, PIL.Image.LANCZOS)
+        resized_tensor = tvf_to_tensor(pil_resized)
+        res.append(resized_tensor)
+    return torch.stack(res, dim=0)
 
 def imread_cv2(path, options=cv2.IMREAD_COLOR):
     """ Open an image or a depthmap with opencv-python.
@@ -135,6 +146,12 @@ def format_images(images):
     # to RGB order, to correspond to the code `img = exif_transpose(PIL.Image.open(os.path.join(root, path))).convert('RGB')`
     if isinstance(images, list):
         images = torch.stack(images, dim=0)
+    N, C, H, W = images.shape
+    if W > 512.0:
+        scale = 512.0 / W
+        new_size = (int(W*scale), int(H*scale))
+        images = resize_image(images, new_size)
+        print(f'>> Resizing the images to 512x512')
     images = images[:, [2, 1, 0], :, :] # To RGB
     imgs = []
     for i, image in enumerate(images):
