@@ -95,7 +95,8 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
     p = coords.shape[3]
     r = targets - coords[...,p//2,p//2,:]
 
-    v *= (r.norm(dim=-1) < 250).float()
+    # v *= (r.norm(dim=-1) < 250).float()
+    v *= (r.norm(dim=-1) < 128).float()
 
     in_bounds = \
         (coords[...,p//2,p//2,0] > bounds[0]) & \

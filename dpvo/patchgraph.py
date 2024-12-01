@@ -14,7 +14,7 @@ import droid_backends
 class PatchGraph:
     """ Dataclass for storing variables """
 
-    def __init__(self, cfg, P, DIM, pmem, M, ht_resized, wd_resized, **kwargs):
+    def __init__(self, cfg, P, DIM, pmem, M, ht_resized, wd_resized, RES, **kwargs):
         self.cfg = cfg
         self.P = P
         self.pmem = pmem
@@ -59,6 +59,7 @@ class PatchGraph:
 
         self.ht_resized = ht_resized
         self.wd_resized = wd_resized
+        self.RES=RES
 
         # configuration of the loop closure
         if cfg.LOCAL_LOOP:
@@ -103,22 +104,23 @@ class PatchGraph:
         @poses: (N, 4, 4) world camera poses
         @indices: list of indices to be initialized
         """
-        depths = torch.stack(depths, dim=0).unsqueeze(0)
-        B, N, H, W = depths.shape
-        if W > self.wd_resized:
-            interp_depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
-        else:
-            interp_depths = depths.squeeze()
+        # depths = torch.stack(depths, dim=0).unsqueeze(0)
+        depths = torch.stack(depths, dim=0)
+        N, H, W = depths.shape
+        # if W > self.wd_resized:
+        #     interp_depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
+        # else:
+        #     interp_depths = depths.squeeze()
         dpvo_poses = create_se3_from_mat(poses).inv() # camera2world -> world2camera
         # points = droid_backends.iproj(dpvo_poses.inv().data, 1/interp_depths, self.intrinsics_[0]).cpu()
 
         for idx in indices:
             patch = self.patches_[idx]
-            depth = interp_depths[idx]
+            depth = depths[idx]
 
             # Extract coordinates and clamp in a batch
-            x_coords = torch.clamp(patch[:, 0, :, :].long(), 0, depth.shape[1] - 1)
-            y_coords = torch.clamp(patch[:, 1, :, :].long(), 0, depth.shape[0] - 1)
+            x_coords = torch.clamp(patch[:, 0, :, :].long(), 0, depth.shape[1] - 1) * self.RES
+            y_coords = torch.clamp(patch[:, 1, :, :].long(), 0, depth.shape[0] - 1) * self.RES
 
             # Batch gather depths using advanced indexing
             extracted_depths = depth[y_coords, x_coords]

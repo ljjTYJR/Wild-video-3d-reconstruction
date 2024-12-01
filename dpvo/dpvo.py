@@ -77,7 +77,7 @@ class DPVO:
         # feature pyramid
         self.pyramid = (self.fmap1_, self.fmap2_)
 
-        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, self.M, ht, wd, **kwargs)
+        self.pg = PatchGraph(self.cfg, self.P, self.DIM, self.pmem, self.M, ht, wd, RES, **kwargs)
         self.warm_up = 10
 
         self.viewer = None
@@ -585,7 +585,7 @@ class DPVO:
 
             # if using Python-version BA
             try:
-                bounds = [0, 0, self.wd, self.ht]
+                bounds = [0-10, 0-10, self.wd+10, self.ht+10]
                 lmbda=1e-4
                 Gs, patches = ba.BA(SE3(self.poses), self.patches, self.intrinsics,
                     target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, bounds, fixedp=t0)
