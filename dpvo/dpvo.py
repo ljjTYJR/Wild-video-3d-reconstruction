@@ -114,6 +114,10 @@ class DPVO:
         return self.pg.patches_.view(1, self.N*self.M, 3, 3, 3)
 
     @property
+    def patches_est(self):
+        return self.pg.patches_est_.view(1, self.N*self.M, 3, 3, 3)
+
+    @property
     def intrinsics(self):
         return self.pg.intrinsics_.view(1, self.N, 4)
 
@@ -588,7 +592,7 @@ class DPVO:
                 bounds = [0-10, 0-10, self.wd+10, self.ht+10]
                 lmbda=1e-4
                 Gs, patches = ba.BA(SE3(self.poses), self.patches, self.intrinsics,
-                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, bounds, fixedp=t0)
+                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, bounds, fixedp=t0, patches_est=self.patches_est)
                 self.pg.patches_[:] = patches.reshape(self.N, self.M, 3, self.P, self.P)
                 self.pg.poses_[:] = Gs.vec().reshape(self.N, 7)
             except:

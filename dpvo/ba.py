@@ -83,7 +83,7 @@ def block_show(A):
     plt.imshow(A[0].detach().cpu().numpy())
     plt.show()
 
-def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, ep=100.0, PRINT=False, fixedp=1, structure_only=False):
+def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, ep=100.0, PRINT=False, fixedp=1, structure_only=False, patches_est=None):
     """ bundle adjustment """
 
     b = 1
@@ -98,6 +98,7 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
     # v *= (r.norm(dim=-1) < 250).float()
     v *= (r.norm(dim=-1) < 128).float()
 
+    # TODO: add more judgements
     in_bounds = \
         (coords[...,p//2,p//2,0] > bounds[0]) & \
         (coords[...,p//2,p//2,1] > bounds[1]) & \
@@ -146,12 +147,15 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
     E = safe_scatter_add_mat(Eik, ii, kk, n, m).view(b, n, m, 6, 1) + \
         safe_scatter_add_mat(Ejk, jj, kk, n, m).view(b, n, m, 6, 1)
 
-    C = safe_scatter_add_vec(torch.matmul(wJzT, Jz), kk, m)
+    mu = 1.0
+    L = (patches_est[0, kx, 2, p//2, p//2] > 0).view(1, -1, 1, 1) # valid depth, add regularization of depth
+    C = safe_scatter_add_vec(torch.matmul(wJzT, Jz), kk, m) + mu * L
 
     v = safe_scatter_add_vec(vi, ii, n).view(b, n, 1, 6, 1) + \
         safe_scatter_add_vec(vj, jj, n).view(b, n, 1, 6, 1)
 
-    w = safe_scatter_add_vec(torch.matmul(wJzT,  r), kk, m)
+    # depth term
+    w = safe_scatter_add_vec(torch.matmul(wJzT,  r), kk, m) - mu * L * (patches[0, kx, 2, p//2, p//2] - patches_est[0, kx, 2, p//2, p//2]).view(1, -1, 1, 1)
 
     if isinstance(lmbda, torch.Tensor):
         lmbda = lmbda.reshape(*C.shape)

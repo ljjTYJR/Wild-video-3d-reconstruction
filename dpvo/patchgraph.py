@@ -30,6 +30,7 @@ class PatchGraph:
         self.tstamps_ = np.zeros(self.N, dtype=np.int64)
         self.poses_ = torch.zeros(self.N, 7, dtype=torch.float, device="cuda") # NOTE: world2camera
         self.patches_ = torch.zeros(self.N, self.M, 3, self.P, self.P, dtype=torch.float, device="cuda") # inverse depths
+        self.patches_est_ = torch.zeros(self.N, self.M, 3, self.P, self.P, dtype=torch.float, device="cuda") # inverse depths
         self.intrinsics_ = torch.zeros(self.N, 4, dtype=torch.float, device="cuda")
 
         self.points_ = torch.zeros(self.N * self.M, 3, dtype=torch.float, device="cuda")
@@ -115,7 +116,7 @@ class PatchGraph:
         # points = droid_backends.iproj(dpvo_poses.inv().data, 1/interp_depths, self.intrinsics_[0]).cpu()
 
         for idx in indices:
-            patch = self.patches_[idx]
+            patch = self.patches_[idx] # get indices of the patch
             depth = depths[idx]
 
             # Extract coordinates and clamp in a batch
@@ -129,8 +130,8 @@ class PatchGraph:
             # Update the patch in one step
             patch[:, 2, :, :] = 1 / median_depths.view(-1, 1, 1)
 
-            # Save the updated patch
-            self.patches_[idx] = patch
+            # Save the updated patch;
+            self.patches_est_[idx] = patch
             self.poses_[idx] = dpvo_poses[idx].data
 
 def create_se3_from_mat(mats):
