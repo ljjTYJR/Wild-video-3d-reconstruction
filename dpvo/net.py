@@ -108,7 +108,8 @@ class Patchifier(nn.Module):
         g = F.avg_pool2d(g, 4, 4)
         return g
 
-    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False, sp_extractor=None):
+    def forward(self, images, patches_per_image=80, disps=None, gradient_bias=False, return_color=False, mask=None, sp_extractor=None):
+        # Test with the superpoint keypoint extraction
         if sp_extractor is not None:
             sp_img = copy.deepcopy(images) # (3,H,W)
             # BGR to RGB
@@ -135,8 +136,18 @@ class Patchifier(nn.Module):
             ix = torch.argsort(g, dim=1)
             x = torch.gather(x, 1, ix[:, -patches_per_image:])
             y = torch.gather(y, 1, ix[:, -patches_per_image:])
-
+        elif mask is not None:
+            # select `patches_per_image` from valid pixels
+            valid_indices = (torch.nonzero(mask, as_tuple=False) / 4).floor()
+            valid_indices = valid_indices[valid_indices[:, 1] < w-1]
+            valid_indices = valid_indices[valid_indices[:, 0] < h-1]
+            unique_indices = torch.unique(valid_indices, dim=0)
+            # random select some pixels
+            coords = unique_indices[torch.randperm(unique_indices.shape[0])[:n*patches_per_image]]
+            x = coords[:, 1].view(n, patches_per_image)
+            y = coords[:, 0].view(n, patches_per_image)
         else:
+            # randomly sample in the whole image
             x = torch.randint(1, w-1, size=[n, patches_per_image], device="cuda") # randomly select patches
             y = torch.randint(1, h-1, size=[n, patches_per_image], device="cuda")
 

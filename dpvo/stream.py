@@ -5,7 +5,7 @@ from multiprocessing import Process, Queue
 from pathlib import Path
 from itertools import chain
 
-def image_stream(queue, imagedir, calib, stride, skip=0, end=None):
+def image_stream(queue, imagedir, depthdir, maskdir, calib, stride, skip=0, end=None):
     """ image generator """
 
     calib = np.loadtxt(calib, delimiter=" ")
@@ -23,6 +23,22 @@ def image_stream(queue, imagedir, calib, stride, skip=0, end=None):
     else:
         image_list = sorted(chain.from_iterable(Path(imagedir).glob(e) for e in img_exts))[skip::stride]
 
+    depth_exts = ["*.npy"]
+    depth_list = None
+    if depthdir:
+        if end is not None:
+            depth_list = sorted(chain.from_iterable(Path(depthdir).glob(e) for e in depth_exts))[skip:end:stride]
+        else:
+            depth_list = sorted(chain.from_iterable(Path(depthdir).glob(e) for e in depth_exts))[skip::stride]
+
+    mask_exts = ["*.png", "*.jpeg", "*.jpg"]
+    mask_list = None
+    if maskdir:
+        if end is not None:
+            mask_list = sorted(chain.from_iterable(Path(maskdir).glob(e) for e in mask_exts))[skip:end:stride]
+        else:
+            mask_list = sorted(chain.from_iterable(Path(maskdir).glob(e) for e in mask_exts))[skip::stride]
+
     for t, imfile in enumerate(image_list):
         image = cv2.imread(str(imfile), cv2.IMREAD_COLOR) # BGR
         if len(calib) > 4:
@@ -38,9 +54,21 @@ def image_stream(queue, imagedir, calib, stride, skip=0, end=None):
         h, w, _ = image.shape
         image = image[:h-h%16, :w-w%16]
 
-        queue.put((t, image, intrinsics))
-
-    queue.put((-1, image, intrinsics))
+        if depth_list:
+            depth = np.load(str(depth_list[t]))
+            depth = depth[:h-h%16, :w-w%16]
+            depth_median = np.median(depth[depth > 0])
+            depth[depth > 10 * depth_median] = 10 * depth_median
+        else:
+            detph = None
+        if mask_list:
+            mask = cv2.imread(str(mask_list[t]), cv2.IMREAD_GRAYSCALE)
+            mask = mask[:h-h%16, :w-w%16]
+            mask = mask.astype(bool)
+        else:
+            mask = None
+        queue.put((t, image, depth, mask, intrinsics))
+    queue.put((-1, image, depth, mask, intrinsics))
 
 def image_stream_limit(queue, imagedir, calib, stride, skip=0, end_idx=50):
     """ image generator """

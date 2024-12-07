@@ -50,6 +50,8 @@ def run(
     cfg,
     network,
     imagedir,
+    depthdir,
+    maskdir,
     calib,
     stride=1,
     skip=0,
@@ -92,29 +94,33 @@ def run(
         reader.join()
 
     if os.path.isdir(imagedir):
-        reader = Process(target=image_stream, args=(queue, imagedir, calib, stride, skip, end))
+        reader = Process(target=image_stream, args=(queue, imagedir, depthdir, maskdir, calib, stride, skip, end))
     else:
         reader = Process(target=video_stream, args=(queue, imagedir, calib, stride, skip))
 
     reader.start()
 
     while 1:
-        (t, image, intrinsics) = queue.get()
+        (t, image, depth, mask, intrinsics) = queue.get()
         if init_intrinsic is not None:
             intrinsics = init_intrinsic
         if t < 0: break
         print(f"Processing frame {t}")
         image = torch.from_numpy(image).permute(2,0,1).cuda()
+        depth = torch.from_numpy(depth).cuda() if depth is not None else None
+        mask = torch.from_numpy(mask).cuda() if mask is not None else None
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
             slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, colmap_init=colmap_init, motion_filter=motion_filter, path=path)
 
         image = image.cuda()
+        depth = depth.cuda() if depth is not None else None
+        mask = mask.cuda() if mask is not None else None
         intrinsics = intrinsics.cuda()
 
         with Timer("SLAM", enabled=timeit):
-            slam(t, image, intrinsics)
+            slam(t, image, depth, mask, intrinsics)
 
     for _ in range(12):
         slam.update()
@@ -150,6 +156,8 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', type=str, default='dpvo')
     parser.add_argument('--network', type=str, default='checkpoints/dpvo.pth')
     parser.add_argument('--imagedir', type=str)
+    parser.add_argument('--depthdir', type=str)
+    parser.add_argument('--maskdir', type=str)
     parser.add_argument('--calib', type=str)
     parser.add_argument('--stride', type=int, default=1)
     parser.add_argument('--buffer', type=int, default=1024)
@@ -188,7 +196,7 @@ if __name__ == '__main__':
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}_{args.skip}_{args.end}")
 
-    (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
+    (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
                     args.mast3r, args.colmap_init, args.motion_filter, path, args.end)
     name = Path(args.imagedir).stem
     trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)

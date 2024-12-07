@@ -475,6 +475,7 @@ class DPVO:
                 self.pg.colors_[i] = self.pg.colors_[i+1]
                 self.pg.poses_[i] = self.pg.poses_[i+1]
                 self.pg.patches_[i] = self.pg.patches_[i+1]
+                self.pg.patches_est_[i] = self.pg.patches_est_[i+1]
                 self.pg.intrinsics_[i] = self.pg.intrinsics_[i+1]
 
                 self.imap_[i%self.mem] = self.imap_[(i+1) % self.mem]
@@ -622,7 +623,7 @@ class DPVO:
         return flatmeshgrid(torch.arange(t0, t1, device="cuda"),
             torch.arange(max(self.n-r, 0), self.n, device="cuda"), indexing='ij')
 
-    def __call__(self, tstamp, image, intrinsics):
+    def __call__(self, tstamp, image, depth, mask, intrinsics):
         """ track new frame """
 
         if (self.pg.n+1) >= self.pg.N:
@@ -638,6 +639,7 @@ class DPVO:
                     patches_per_image=self.cfg.PATCHES_PER_FRAME,
                     gradient_bias=self.cfg.GRADIENT_BIAS,
                     return_color=True,
+                    mask=mask,
                     sp_extractor=self.sp_extractor)
 
         ### update state attributes ###
@@ -670,14 +672,15 @@ class DPVO:
                 tvec_qvec = self.pg.poses[self.n-1]
                 self.pg.poses_[self.n] = tvec_qvec
 
-        # TODO better depth initialization
-        # TODO use the metric3D as initialization (do we need intrinsic parameters?)
+        # use the metric3D as initialization in the optimization
+        # TODO: also, as the initialization!
         patches[:,:,2] = torch.rand_like(patches[:,:,2,0,0,None,None]) # the patch dimension: [B, N, 3, p, p], the 3rd at 3 is the depth; 1st at 3 is W, 2rd at 3 in height
         if self.is_initialized:
             s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
             patches[:,:,2] = s
 
         self.pg.patches_[self.n] = patches
+        self.pg.set_prior_depth(self.n, depth)
 
         ### update network attributes ###
         self.imap_[self.n % self.mem] = imap.squeeze()

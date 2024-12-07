@@ -147,7 +147,7 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
     E = safe_scatter_add_mat(Eik, ii, kk, n, m).view(b, n, m, 6, 1) + \
         safe_scatter_add_mat(Ejk, jj, kk, n, m).view(b, n, m, 6, 1)
 
-    mu = 1.0
+    mu = 0.5
     L = (patches_est[0, kx, 2, p//2, p//2] > 0).view(1, -1, 1, 1) # valid depth, add regularization of depth
     C = safe_scatter_add_vec(torch.matmul(wJzT, Jz), kk, m) + mu * L
 

@@ -99,6 +99,20 @@ class PatchGraph:
     def ix(self):
         return self.index_.view(-1)
 
+    def set_prior_depth(self, idx, depth):
+        if depth is None:
+            return
+        patch = self.patches_[idx]
+        # TODO: the sampling grids is spare, not the continuous grids in the original image
+        x_coords = torch.clamp(patch[:, 0, :, :].long() * self.RES, 0, depth.shape[1] - 1)
+        y_coords = torch.clamp(patch[:, 1, :, :].long() * self.RES, 0, depth.shape[0] - 1)
+
+        extracted_depths = depth[y_coords, x_coords]
+        median_depths = torch.median(extracted_depths.view(extracted_depths.shape[0], -1), dim=1).values
+
+        patch[:, 2, :, :] = 1 / median_depths.view(-1, 1, 1)
+        self.patches_est_[idx] = patch
+
     def init_from_prior(self, depths, poses, indices, images=None):
         """ Init the depth and camera poses given known prior information (by indices)
         @depths: (N, H, W) (full resolution, real depths)
@@ -120,8 +134,8 @@ class PatchGraph:
             depth = depths[idx]
 
             # Extract coordinates and clamp in a batch
-            x_coords = torch.clamp(patch[:, 0, :, :].long(), 0, depth.shape[1] - 1) * self.RES
-            y_coords = torch.clamp(patch[:, 1, :, :].long(), 0, depth.shape[0] - 1) * self.RES
+            x_coords = torch.clamp(patch[:, 0, :, :].long() * self.RES, 0, depth.shape[1] - 1)
+            y_coords = torch.clamp(patch[:, 1, :, :].long() * self.RES, 0, depth.shape[0] - 1)
 
             # Batch gather depths using advanced indexing
             extracted_depths = depth[y_coords, x_coords]
