@@ -136,8 +136,17 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
     ii = ii - fixedp
     jj = jj - fixedp
 
+
     kx, kk = torch.unique(kk, return_inverse=True, sorted=True)
     m = len(kx)
+
+    # Test: fix some frame depth in the BA
+    # fix_d = 8
+    # kx_min = kx.min().item()
+    # fixed_dp = kx_min + fix_d * 96
+    # m -= fix_d * 96
+    # kx = kx[kx >= fixed_dp]
+    # kk = kk - fix_d * 96
 
     B = safe_scatter_add_mat(Bii, ii, ii, n, n).view(b, n, n, 6, 6) + \
         safe_scatter_add_mat(Bij, ii, jj, n, n).view(b, n, n, 6, 6) + \

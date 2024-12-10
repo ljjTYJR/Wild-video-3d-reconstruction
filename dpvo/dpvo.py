@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 import cv2
 import os
+import matplotlib
 from matplotlib import pyplot as plt
 
 from . import fastba
@@ -401,7 +402,10 @@ class DPVO:
         plt.pause(0.1)
         plt.close()
 
-    def draw_img_matching_target(self, key_idx, query_num):
+    def draw_img_matching_target(self, key_idx, query_num, save=False):
+        if save:
+            # non-interactive mode
+            matplotlib.use('Agg')
         coords = self.reproject() # [B, N, 2, p, p]
         with torch.amp.autocast('cuda', enabled=True):
             corr = self.corr(coords) # correleation
@@ -413,8 +417,8 @@ class DPVO:
         if query_num <= 3:
             fig, axes = plt.subplots(query_num, 2, figsize=(15, 20))
         else:
-            row = query_num // 2
-            col = 2
+            row = query_num
+            col = 1
             fig, axes = plt.subplots(row, col, figsize=(15, 20))
         key_img_x = self.pg.patches_[key_idx][:, 0, self.P//2, self.P//2].cpu().numpy() * self.RES
         key_img_y = self.pg.patches_[key_idx][:, 1, self.P//2, self.P//2].cpu().numpy() * self.RES
@@ -444,9 +448,15 @@ class DPVO:
             ax.set_title(f'Image Pair {i}')
             ax.axis('off')
         plt.tight_layout()
-        plt.show(block=False)
-        plt.pause(0.1)
-        plt.close()
+        if save:
+            imgmatch_path = f'{self.path}/img_match'
+            if not os.path.exists(imgmatch_path):
+                os.makedirs(imgmatch_path, exist_ok=True)
+            plt.savefig(f'{imgmatch_path}/img_match_{key_idx}.png', bbox_inches='tight', dpi=300)
+        else:
+            plt.show(block=False)
+            plt.pause(0.1)
+            plt.close()
 
     def keyframe(self, mast3r_update=True):
         cur_key = self.cfg.KEYFRAME_INDEX
@@ -502,6 +512,8 @@ class DPVO:
                     images = [self.image_buffer_[i % self.mem] for i in range(img_idx0, img_idx1)]
                     poses = [SE3(self.pg.poses_[i]) for i in range(img_idx0, img_idx1)]
                     dpvo_mast3r_optimization(images, poses, pts=None, mast3r_model=self.mast3r_model, fixed=2, intrinsics=self.pg.intrinsics_[img_idx0:img_idx1])
+
+            # self.draw_img_matching_target(k, 6, save=True)
 
         """
         if self.n > self.cfg.OPTIMIZATION_WINDOW:

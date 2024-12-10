@@ -60,7 +60,7 @@ def image_stream(queue, imagedir, depthdir, maskdir, calib, stride, skip=0, end=
             depth_median = np.median(depth[depth > 0])
             depth[depth > 10 * depth_median] = 10 * depth_median
         else:
-            detph = None
+            depth = None
         if mask_list:
             mask = cv2.imread(str(mask_list[t]), cv2.IMREAD_GRAYSCALE)
             mask = mask[:h-h%16, :w-w%16]

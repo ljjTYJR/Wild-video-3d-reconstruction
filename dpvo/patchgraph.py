@@ -112,6 +112,7 @@ class PatchGraph:
 
         patch[:, 2, :, :] = 1 / median_depths.view(-1, 1, 1)
         self.patches_est_[idx] = patch
+        self.patches_[idx] = patch # initialize the depth
 
     def init_from_prior(self, depths, poses, indices, images=None):
         """ Init the depth and camera poses given known prior information (by indices)

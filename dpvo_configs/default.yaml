@@ -1,15 +1,15 @@
 ### DPVO Config File ###
 
 # VO config (increase for better accuracy)
-PATCHES_PER_FRAME: 96
+PATCHES_PER_FRAME: 192
 REMOVAL_WINDOW: 22
 OPTIMIZATION_WINDOW: 10
 PATCH_LIFETIME: 13
 # PATCH_LIFETIME: 20
 
 # threshold for keyframe removal
-# KEYFRAME_THRESH: 15.0
-KEYFRAME_THRESH: 10.0
+KEYFRAME_THRESH: 15.0
+# KEYFRAME_THRESH: 150.0
 
 # camera motion model
 MOTION_MODEL: 'DAMPED_LINEAR'
