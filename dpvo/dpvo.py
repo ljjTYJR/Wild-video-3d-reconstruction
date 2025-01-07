@@ -514,6 +514,9 @@ class DPVO:
                     dpvo_mast3r_optimization(images, poses, pts=None, mast3r_model=self.mast3r_model, fixed=2, intrinsics=self.pg.intrinsics_[img_idx0:img_idx1])
 
             # self.draw_img_matching_target(k, 6, save=True)
+            if torch.isnan(self.pg.poses_[k]).any():
+                print("Error: the estimated pose is nan!")
+                raise Exception("Error: the estimated pose is nan!")
 
         """
         if self.n > self.cfg.OPTIMIZATION_WINDOW:

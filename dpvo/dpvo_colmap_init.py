@@ -155,7 +155,10 @@ class DPVOColmapInit:
         else:
             camera_bin = target_dir / "cameras.bin"
             cam_id_to_camera = read_cameras_binary(camera_bin)
-            f, _, cx , cy = cam_id_to_camera[1].params
+            if cam_id_to_camera[1].model == "SIMPLE_PINHOLE":
+                f, cx, cy = cam_id_to_camera[1].params
+            else:
+                f, _, cx , cy = cam_id_to_camera[1].params
         fx, fy = f, f
         cx, cy = cx, cy
         return fx, fy, cx, cy
