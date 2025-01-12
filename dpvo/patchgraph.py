@@ -63,8 +63,7 @@ class PatchGraph:
         self.RES=RES
 
         # configuration of the loop closure
-        if cfg.LOCAL_LOOP:
-            self.local_loop_db = RetrievalNetVLAD(self.N)
+        self.local_loop_db = None
 
     def edges_loop(self):
         """ Adding edges from old patches to new frames """
@@ -123,12 +122,7 @@ class PatchGraph:
         # depths = torch.stack(depths, dim=0).unsqueeze(0)
         depths = torch.stack(depths, dim=0)
         N, H, W = depths.shape
-        # if W > self.wd_resized:
-        #     interp_depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
-        # else:
-        #     interp_depths = depths.squeeze()
         dpvo_poses = create_se3_from_mat(poses).inv() # camera2world -> world2camera
-        # points = droid_backends.iproj(dpvo_poses.inv().data, 1/interp_depths, self.intrinsics_[0]).cpu()
 
         for idx in indices:
             patch = self.patches_[idx] # get indices of the patch
@@ -149,6 +143,9 @@ class PatchGraph:
             self.patches_est_[idx] = patch
             self.poses_[idx] = dpvo_poses[idx].data
 
+    def initialize_retrieval_db(self, nvlad_db):
+        self.retri_manger = nvlad_db
+
 def create_se3_from_mat(mats):
     """ Create SE3 from 4x4 matrix """
     Rs = mats[:, :3, :3]
@@ -156,3 +153,4 @@ def create_se3_from_mat(mats):
     quats = matrix_to_quaternion(Rs)[:, [1,2,3,0]] # (w, x,y,z)->(x,y,z,w)
     poses = torch.cat([Ts, quats], dim=1)
     return SE3(poses)
+

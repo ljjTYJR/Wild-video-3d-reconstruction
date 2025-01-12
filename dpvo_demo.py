@@ -19,6 +19,7 @@ from dpvo.config import cfg
 from dpvo.stream import image_stream, video_stream, image_stream_limit
 from dpvo.plot_utils import plot_trajectory, save_trajectory_tum_format, save_output_for_COLMAP
 from dpvo.dpvo_colmap_init import DPVOColmapInit
+from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
 
 SKIP = 0
 
@@ -98,6 +99,16 @@ def run(
     else:
         reader = Process(target=video_stream, args=(queue, imagedir, calib, stride, skip))
 
+    # Due to the lack of enough GPU memory, we first extract the global descriptors before the beginning of the VSLAM
+    retrieval=None
+    if cfg.LOCAL_LOOP_OFFLINE:
+        print("--------------------------------")
+        print("Extracting global descriptors...")
+        print("--------------------------------")
+        retrieval = RetrievalNetVLADOffline(imagedir, skip, end, stride)
+        retrieval.insert_img_offline()
+        retrieval.end_and_clean()
+
     reader.start()
 
     while 1:
@@ -112,7 +123,8 @@ def run(
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, colmap_init=colmap_init, motion_filter=motion_filter, path=path)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, colmap_init=colmap_init,
+                        motion_filter=motion_filter, path=path, nvlad_db=retrieval)
 
         image = image.cuda()
         depth = depth.cuda() if depth is not None else None
@@ -131,9 +143,6 @@ def run(
     import pickle
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
-    # with open(f"{path}/dpvo.pkl", "wb") as f:
-    #     pickle.dump(slam, f)
-    #     f.close()
 
     if save_reconstruction:
         points = slam.points_.cpu().numpy()[:slam.m]

@@ -194,3 +194,7 @@ def BA(poses, patches, intrinsics, targets, weights, lmbda, ii, jj, kk, bounds, 
         poses = pose_retr(poses, dX, fixedp + torch.arange(n))
 
     return poses, patches
+
+def MoBA():
+    # motion-only bundle adjustment
+    raise NotImplementedError

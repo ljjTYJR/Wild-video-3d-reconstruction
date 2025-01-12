@@ -4,17 +4,18 @@ import shutil
 import sys
 import torch
 import numpy as np
-sys.path.append('../')
+sys.path.append('.')
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # from hloc import extract_features, pairs_from_retrieval
 from hloc.utils.base_model import dynamic_load
 from hloc.utils.io import read_image
 from hloc import extractors
 
-IMG_DIR = '/media/shuo/T7/duslam/video_images/temple/seq1/small_test/images'
-OUTS_DIR = 'tmp_output'
-WINODW_SIZE = 12
+IMG_DIR = '/media/shuo/T7/duslam/video_images/china_classical_park_512/loop_test/images'
+OUTS_DIR = '/media/shuo/T7/duslam/video_images/china_classical_park_512/loop_test/output'
+WINODW_SIZE = 30
 retrieval_option = 'netvlad'
-TOPK=10
+TOPK=20
 netvlad_confs={
     "output": "global-feats-netvlad",
     "model": {"name": "netvlad"},
@@ -37,6 +38,7 @@ class RetrievalNetVLAD:
     @torch.no_grad()
     def insert_img(self, idx, img_path):
         image = read_image(img_path)
+        # Refer to the `hloc` implementation, the image is normalized to [0, 1] (in the NeTVLAD, will be recovered to [0, 255])
         image = image.astype(np.float32).transpose((2, 0, 1)) / 255.0
         image = torch.from_numpy(image).unsqueeze(0)
         pred = self.netvlad_model({"image": image.to(self.device, non_blocking=True)})
@@ -47,8 +49,9 @@ class RetrievalNetVLAD:
 
     @torch.no_grad()
     def extract_feature(self):
-        # process each image and then return the reference index
         for idx, img in enumerate(sorted(os.listdir(IMG_DIR))):
+            if idx % 2 == 0:
+                continue
             self.img_buffer[idx] = img
             img_path = os.path.join(IMG_DIR, img)
             self.insert_img(idx, img_path)
@@ -70,7 +73,7 @@ class RetrievalNetVLAD:
             val, indices = torch.topk(sim, TOPK, dim=0)
         # print the idx image and the topk images
         print(self.img_buffer[idx])
-        print(indices)
+        print(indices, val)
         # corrd_imgs = [self.img_buffer[potential_indices[i]] for i in indices]
         # print(corrd_imgs)
 

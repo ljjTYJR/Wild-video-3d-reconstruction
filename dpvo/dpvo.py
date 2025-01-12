@@ -25,7 +25,9 @@ autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False, colmap_init=False, motion_filter=False, path=''):
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False,
+                 colmap_init=False, motion_filter=False, path='',
+                 nvlad_db=None):
         self.cfg = cfg
         self.load_weights(network)
         self.is_initialized = False
@@ -57,7 +59,9 @@ class DPVO:
             self.M += self.cfg.PATCHES_PER_FRAME # random sampling + super point extraction
 
         ### network attributes ###
-        self.pmem = self.mem = 36 # 32 was too small given default settings
+        self.pmem = self.mem = 36
+        if self.cfg.LOCAL_LOOP_OFFLINE:
+            self.pmem = self.cfg.MAX_EDGE_AGE
 
         if self.cfg.MIXED_PRECISION:
             self.kwargs = kwargs = {"device": "cuda", "dtype": torch.half}
@@ -105,6 +109,13 @@ class DPVO:
 
         self.inlier_ratio_record = {}
         self.inlier_ratio_threshold = 0.8
+
+        if self.cfg.LOCAL_LOOP_OFFLINE:
+            self.pg.initialize_retrieval_db(nvlad_db)
+
+        # sim(3) loop closure
+        if self.cfg.CLASSIC_LOOP_CLOSURE:
+            self.load_long_term_loop_closure()
 
     @property
     def poses(self):
@@ -314,7 +325,7 @@ class DPVO:
     def corr(self, coords, indicies=None):
         """ local correlation volume """
         ii, jj = indicies if indicies is not None else (self.pg.kk, self.pg.jj)
-        ii1 = ii % (self.M * self.mem)
+        ii1 = ii % (self.M * self.pmem)
         jj1 = jj % (self.mem)
         corr1 = altcorr.corr(self.gmap, self.pyramid[0], coords / 1, ii1, jj1, 3)
         corr2 = altcorr.corr(self.gmap, self.pyramid[1], coords / 4, ii1, jj1, 3) # now, the coords will de downsacled by 4 (not integer anymore)
@@ -354,11 +365,32 @@ class DPVO:
 
         with autocast(enabled=self.cfg.MIXED_PRECISION):
             corr = self.corr(coords, indicies=(kk, jj))
-            ctx = self.imap[:,kk % (self.M * self.mem)]
+            ctx = self.imap[:,kk % (self.M * self.pmem)]
             net, (delta, weight, _) = \
                 self.network.update(net, ctx, corr, None, ii, jj, kk)
 
         return torch.quantile(delta.norm(dim=-1).float(), 0.5)
+
+    def loop_verify(self, j, i_s):
+        """ loop verification """
+        # test only one
+            # TODO
+        i = i_s[0]
+        kk = torch.arange(i * self.M, (i + 1) * self.M, device="cuda")
+        jj = j * torch.ones_like(kk)
+        ii = self.ix[kk]
+
+        net = torch.zeros(1, len(ii), self.DIM, **self.kwargs)
+        # build identity coord map
+        coords = self.patches[:, kk, 0:2].view(1, self.M, 2, 3, 3)
+
+        with autocast(enabled=self.cfg.MIXED_PRECISION):
+            corr = self.corr(coords, indicies=(kk, jj))
+            ctx = self.imap[:, kk % (self.M * self.pmem)]
+            net, (delta, weight, _) = \
+                self.network.update(net, ctx, corr, None, ii, jj, kk)
+
+        return True
 
     def motionmag(self, i, j):
         k = (self.pg.ii == i) & (self.pg.jj == j)
@@ -487,9 +519,10 @@ class DPVO:
                 self.pg.patches_[i] = self.pg.patches_[i+1]
                 self.pg.patches_est_[i] = self.pg.patches_est_[i+1]
                 self.pg.intrinsics_[i] = self.pg.intrinsics_[i+1]
+                self.pg.retri_manger.netvlad_db_online[i] = self.pg.retri_manger.netvlad_db_online[i+1]
 
-                self.imap_[i%self.mem] = self.imap_[(i+1) % self.mem]
-                self.gmap_[i%self.mem] = self.gmap_[(i+1) % self.mem]
+                self.imap_[i%self.pmem] = self.imap_[(i+1) % self.pmem]
+                self.gmap_[i%self.pmem] = self.gmap_[(i+1) % self.pmem]
                 self.fmap1_[0,i%self.mem] = self.fmap1_[0,(i+1)%self.mem]
                 self.fmap2_[0,i%self.mem] = self.fmap2_[0,(i+1)%self.mem]
 
@@ -498,9 +531,8 @@ class DPVO:
             self.n -= 1
             self.pg.m -= self.M
         else:
-            if self.cfg.LOCAL_LOOP:
-                self.pg.local_loop_db.insert_img(k, self.image_buffer_[k % self.mem][[2, 1, 0], :, :]/255.0)
-                query_val, quer_indices = self.pg.local_loop_db.query(k)
+            if self.cfg.LOCAL_LOOP_OFFLINE:
+                query_val, quer_indices = self.pg.retri_manger.query_online(k)
 
             if mast3r_update and self.mast3r_est:
                 # Use the mast3r model to give the coarse camera poses estimation (only 3D-3D correspondence)
@@ -584,7 +616,7 @@ class DPVO:
 
             with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
-                ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
+                ctx = self.imap[:,self.pg.kk % (self.M * self.pmem)]
                 self.pg.net, (delta, weight, _) = \
                     self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
 
@@ -688,7 +720,6 @@ class DPVO:
                 self.pg.poses_[self.n] = tvec_qvec
 
         # use the metric3D as initialization in the optimization
-        # TODO: also, as the initialization!
         patches[:,:,2] = torch.rand_like(patches[:,:,2,0,0,None,None]) # the patch dimension: [B, N, 3, p, p], the 3rd at 3 is the depth; 1st at 3 is W, 2rd at 3 in height
         if self.is_initialized:
             s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
@@ -698,8 +729,8 @@ class DPVO:
         self.pg.set_prior_depth(self.n, depth)
 
         ### update network attributes ###
-        self.imap_[self.n % self.mem] = imap.squeeze()
-        self.gmap_[self.n % self.mem] = gmap.squeeze()
+        self.imap_[self.n % self.pmem] = imap.squeeze()
+        self.gmap_[self.n % self.pmem] = gmap.squeeze()
         self.fmap1_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 1, 1)
         self.fmap2_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 4, 4)
         self.image_buffer_[self.n % self.mem] = image
@@ -710,9 +741,15 @@ class DPVO:
             if self.motion_probe() < 2.0:
                 self.pg.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
-            else:
-                if self.cfg.LOCAL_LOOP:
-                    self.pg.local_loop_db.insert_img(self.n, image[[2, 1, 0], :, :]/255.0) # (RGB; (3,h,w), [0,1])
+
+        if self.cfg.LOCAL_LOOP_OFFLINE:
+            self.pg.retri_manger.netvlad_db_online[self.n] = self.pg.retri_manger.nvlad_db[tstamp]
+            score, indices = self.pg.retri_manger.query_online(self.n, skip_window=self.cfg.PATCH_LIFETIME)
+            if (score is not None) and (indices is not None):
+                valid = score > 0.35
+                if valid.sum() > 0:
+                    print(f"frame {tstamp} has {valid.sum()} valid matches")
+                    valid_loop = self.loop_verify(self.n, indices[valid])
 
         self.pg.n += 1
         self.pg.m += self.M
@@ -723,51 +760,13 @@ class DPVO:
 
         if self.n == self.warm_up and not self.is_initialized:
             self.is_initialized = True
-            """
-            elif self.n == self.warm_up:
-                self.is_initialized = True
-
-                # optimize and get the estimated intrinsic parameters
-                if len(self.mast3r_image_buffer) == self.warm_up:
-                    with torch.enable_grad():
-                        scene = local_dust3r_ba(self.mast3r_image_buffer, self.mast3r_model)
-                # focal, cx and cy are half of the original image size
-                if self.mast3r_est:
-                    avg_intrinsics = scene.get_intrinsics().mean(dim=0)
-                    depths = torch.stack(scene.get_depthmaps(raw=False), dim=0)
-                    mast3r_intrinsics = torch.tensor([avg_intrinsics[0, 0], avg_intrinsics[0, 0],
-                                                    avg_intrinsics[0, 2], avg_intrinsics[1, 2]], device='cuda') \
-                                                    / self.RES
-                    self.pg.intrinsics_[:self.warm_up] = mast3r_intrinsics
-
-                    # depths = F.interpolate(depths, scale_factor=0.25, mode='bilinear').squeeze()
-                    # # initialize the path depth with the mast3r depth map
-                    # for idx in range(len(depths)):
-                    #     patch = self.pg.patches_[idx].clone()
-                    #     depth = depths[idx]
-                    #     N, _, W_patch, H_patch = patch.shape
-                    #     for i in range(N):
-                    #         x_coords = patch[i, 0, :, :].long()
-                    #         y_coords = patch[i, 1, :, :].long()
-                    #         x_coords = torch.clamp(x_coords, 0, depth.shape[1] - 1)
-                    #         y_coords = torch.clamp(y_coords, 0, depth.shape[0] - 1)
-                    #         extracted_depths = depth[y_coords, x_coords]
-                    #         median_depth = torch.median(extracted_depths)
-                    #         patch[i, 2, :, :] = 1/median_depth # NOTE: we use the inverse depth
-                    #     self.pg.patches_[idx] = patch
-
-                del self.mast3r_image_buffer
-                del self.mast3r_model
-                """
             if self.mast3r_est:
                 mast3r_depths, mast3r_poses = dpvo_mast3r_initialization(self.image_buffer_[:self.warm_up], self.mast3r_model, intrinsics=self.pg.intrinsics_[:self.warm_up])
                 self.pg.init_from_prior(mast3r_depths, mast3r_poses, list(range(self.warm_up)), images=self.image_buffer_[:self.warm_up])
-            # self.draw_img_matching_coord(6, 6)
 
             for itr in range(12):
                 if self.rr:
                     self.rr_register_info(itr)
-                # self.draw_img_matching_target(6, 6)
                 if self.mast3r_est:
                     self.update(t0=4) # we fix first two frames to get the scale
                 else:

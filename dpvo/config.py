@@ -25,6 +25,10 @@ _C.MOTION_DAMPING = 0.5
 _C.MIXED_PRECISION = True
 
 # loop closure setting
-_C.LOCAL_LOOP = False
+_C.LOCAL_LOOP_OFFLINE = False
+_C.MAX_EDGE_AGE = 1000
+
+# classical loop
+_C.CLASSIC_LOOP_CLOSURE = True
 
 cfg = _C
