@@ -101,7 +101,7 @@ def run(
 
     # Due to the lack of enough GPU memory, we first extract the global descriptors before the beginning of the VSLAM
     retrieval=None
-    if cfg.LOCAL_LOOP_OFFLINE:
+    if cfg.CLASSIC_LOOP_CLOSURE:
         print("--------------------------------")
         print("Extracting global descriptors...")
         print("--------------------------------")

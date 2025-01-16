@@ -4,6 +4,7 @@ import shutil
 import sys
 import torch
 import numpy as np
+import tqdm
 sys.path.append('.')
 # sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # from hloc import extract_features, pairs_from_retrieval
@@ -11,8 +12,8 @@ from hloc.utils.base_model import dynamic_load
 from hloc.utils.io import read_image
 from hloc import extractors
 
-IMG_DIR = '/media/shuo/T7/duslam/video_images/china_classical_park_512/loop_test/images'
-OUTS_DIR = '/media/shuo/T7/duslam/video_images/china_classical_park_512/loop_test/output'
+IMG_DIR = '/media/shuo/T7/duslam/video_images/china_classical_park_512/loop_test/bd_images'
+QUERY_DIR = '/media/shuo/T7/duslam/video_images/china_classical_park_512/loop_test/query_images'
 WINODW_SIZE = 30
 retrieval_option = 'netvlad'
 TOPK=20
@@ -48,14 +49,12 @@ class RetrievalNetVLAD:
         self.netvlad_db[idx] = pred['global_descriptor']
 
     @torch.no_grad()
-    def extract_feature(self):
-        for idx, img in enumerate(sorted(os.listdir(IMG_DIR))):
-            if idx % 2 == 0:
-                continue
+    def extract_feature(self, img_dir):
+        for idx, img in enumerate(sorted(os.listdir(img_dir))):
             self.img_buffer[idx] = img
-            img_path = os.path.join(IMG_DIR, img)
+            img_path = os.path.join(img_dir, img)
             self.insert_img(idx, img_path)
-            query_indices = self.query(idx)
+            # query_indices = self.query(idx)
 
     @torch.no_grad()
     def query(self, idx):
@@ -77,11 +76,32 @@ class RetrievalNetVLAD:
         # corrd_imgs = [self.img_buffer[potential_indices[i]] for i in indices]
         # print(corrd_imgs)
 
+    @torch.no_grad()
+    def query_by_img(self, query_img_path):
+        # query the image by iterating the img in the path
+        # use tqdm
+        for idx, img in enumerate(sorted(os.listdir(query_img_path))):
+            img_path = os.path.join(query_img_path, img)
+            image = read_image(img_path)
+            image = image.astype(np.float32).transpose((2, 0, 1)) / 255.0
+            image = torch.from_numpy(image).unsqueeze(0)
+            pred = self.netvlad_model({"image": image.to(self.device, non_blocking=True)})
+            if self.as_half:
+                pred['global_descriptor'] = pred['global_descriptor'].to(torch.float16)
+            query_desc = pred['global_descriptor'].cpu()
 
+            sim = torch.matmul(self.netvlad_db, query_desc.T)
+            if len(sim) < TOPK:
+                val, indices = torch.topk(sim, len(sim), dim=0)
+            else:
+                val, indices = torch.topk(sim, TOPK, dim=0)
+            print(idx)
+            print(val[0], indices[0])
 
 def main():
     netvlad_bd = RetrievalNetVLAD()
-    netvlad_bd.extract_feature()
+    netvlad_bd.extract_feature(IMG_DIR)
+    netvlad_bd.query_by_img(QUERY_DIR)
 
 if __name__ == '__main__':
     main()

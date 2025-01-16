@@ -8,7 +8,7 @@ PATCH_LIFETIME: 13
 # PATCH_LIFETIME: 20
 
 # threshold for keyframe removal
-KEYFRAME_THRESH: 45.0
+KEYFRAME_THRESH: 65.0
 
 # camera motion model
 MOTION_MODEL: 'DAMPED_LINEAR'
@@ -20,4 +20,4 @@ MIXED_PRECISION: True
 GRADIENT_BIAS: False
 
 # Loop closure
-LOCAL_LOOP: False
+CLASSIC_LOOP_CLOSURE: True

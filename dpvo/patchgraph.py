@@ -7,7 +7,6 @@ from . import projective_ops as pops
 from .lietorch import SE3
 # from .loop_closure.optim_utils import reduce_edges
 from .utils import *
-from .netvlad_retrieval import RetrievalNetVLAD
 from .utils import matrix_to_quaternion
 import droid_backends
 
@@ -61,9 +60,6 @@ class PatchGraph:
         self.ht_resized = ht_resized
         self.wd_resized = wd_resized
         self.RES=RES
-
-        # configuration of the loop closure
-        self.local_loop_db = None
 
     def edges_loop(self):
         """ Adding edges from old patches to new frames """
@@ -142,9 +138,6 @@ class PatchGraph:
             # Save the updated patch;
             self.patches_est_[idx] = patch
             self.poses_[idx] = dpvo_poses[idx].data
-
-    def initialize_retrieval_db(self, nvlad_db):
-        self.retri_manger = nvlad_db
 
 def create_se3_from_mat(mats):
     """ Create SE3 from 4x4 matrix """

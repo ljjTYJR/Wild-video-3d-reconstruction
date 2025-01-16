@@ -60,8 +60,6 @@ class DPVO:
 
         ### network attributes ###
         self.pmem = self.mem = 36
-        if self.cfg.LOCAL_LOOP_OFFLINE:
-            self.pmem = self.cfg.MAX_EDGE_AGE
 
         if self.cfg.MIXED_PRECISION:
             self.kwargs = kwargs = {"device": "cuda", "dtype": torch.half}
@@ -110,12 +108,9 @@ class DPVO:
         self.inlier_ratio_record = {}
         self.inlier_ratio_threshold = 0.8
 
-        if self.cfg.LOCAL_LOOP_OFFLINE:
-            self.pg.initialize_retrieval_db(nvlad_db)
-
         # sim(3) loop closure
         if self.cfg.CLASSIC_LOOP_CLOSURE:
-            self.load_long_term_loop_closure()
+            self.load_long_term_loop_closure(nvlad_db)
 
     @property
     def poses(self):
@@ -188,7 +183,7 @@ class DPVO:
         image = self.image_.cpu().numpy()
         image = np.transpose(image, (1, 2, 0))
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        rr.log(image_label, rr.Image(image))
+        # rr.log(image_label, rr.Image(image))
         rr.log(f"world/camera/{self.n}", rr.Pinhole(focal_length=float(self.intrinsics[0][0][0].cpu()), height=self.ht/self.RES, width=self.wd/self.RES))
         rr.log(f"world/camera/{self.n}", rr.Transform3D(translation=translations[-1], rotation=rr.Quaternion(xyzw=rotations[-1]), scale=0.50))
 
@@ -219,6 +214,14 @@ class DPVO:
         plt.title("Inlier ratio respect to the frame id")
         plt.savefig(f"{path}/inlier_ratio_record.png")
         plt.close()
+
+    def load_long_term_loop_closure(self, nvlad_db):
+        try:
+            from .loop_closure.long_term import LongTermLoopClosure
+            self.long_term_lc = LongTermLoopClosure(self.cfg, self.pg, nvlad_db)
+        except ModuleNotFoundError as e:
+            self.cfg.CLASSIC_LOOP_CLOSURE = False
+            print(f"WARNING: {e}")
 
     def load_weights(self, network):
         # load network from checkpoint file
@@ -289,6 +292,8 @@ class DPVO:
 
     def terminate(self):
         """ interpolate missing poses """
+        if self.cfg.CLASSIC_LOOP_CLOSURE:
+            self.long_term_lc.terminate(self.n)
         self.traj = {}
         for i in range(self.n):
             self.traj[self.pg.tstamps_[i].item()] = self.pg.poses_[i]
@@ -305,6 +310,8 @@ class DPVO:
 
     def terminate_keyframe(self):
         """ Only report keyframes """
+        if self.cfg.CLASSIC_LOOP_CLOSURE:
+            self.long_term_lc.terminate(self.n)
         self.traj = {}
         key_frame_timestamps = []
         for i in range(self.n):
@@ -519,7 +526,6 @@ class DPVO:
                 self.pg.patches_[i] = self.pg.patches_[i+1]
                 self.pg.patches_est_[i] = self.pg.patches_est_[i+1]
                 self.pg.intrinsics_[i] = self.pg.intrinsics_[i+1]
-                self.pg.retri_manger.netvlad_db_online[i] = self.pg.retri_manger.netvlad_db_online[i+1]
 
                 self.imap_[i%self.pmem] = self.imap_[(i+1) % self.pmem]
                 self.gmap_[i%self.pmem] = self.gmap_[(i+1) % self.pmem]
@@ -530,10 +536,11 @@ class DPVO:
 
             self.n -= 1
             self.pg.m -= self.M
-        else:
-            if self.cfg.LOCAL_LOOP_OFFLINE:
-                query_val, quer_indices = self.pg.retri_manger.query_online(k)
 
+            if self.cfg.CLASSIC_LOOP_CLOSURE:
+                self.long_term_lc.keyframe(k)
+
+        else:
             if mast3r_update and self.mast3r_est:
                 # Use the mast3r model to give the coarse camera poses estimation (only 3D-3D correspondence)
                 if k > self.cfg.PATCH_LIFETIME:
@@ -742,14 +749,8 @@ class DPVO:
                 self.pg.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
 
-        if self.cfg.LOCAL_LOOP_OFFLINE:
-            self.pg.retri_manger.netvlad_db_online[self.n] = self.pg.retri_manger.nvlad_db[tstamp]
-            score, indices = self.pg.retri_manger.query_online(self.n, skip_window=self.cfg.PATCH_LIFETIME)
-            if (score is not None) and (indices is not None):
-                valid = score > 0.35
-                if valid.sum() > 0:
-                    print(f"frame {tstamp} has {valid.sum()} valid matches")
-                    valid_loop = self.loop_verify(self.n, indices[valid])
+        if self.cfg.CLASSIC_LOOP_CLOSURE:
+            self.long_term_lc(image, self.n, tstamp)
 
         self.pg.n += 1
         self.pg.m += self.M
@@ -780,6 +781,10 @@ class DPVO:
             self.keyframe(mast3r_update=False)
             if self.rr:
                 self.rr_register_info()
+
+        if self.cfg.CLASSIC_LOOP_CLOSURE:
+            self.long_term_lc.attempt_loop_closure(self.n)
+            # self.long_term_lc.lc_callback()
 
 # NOTE: current not used
 # def prepare_colmap_data(dpvo, idx0, idx1):

@@ -67,7 +67,7 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
 
         img_exts = ["*.png", "*.jpeg", "*.jpg"]
         self.image_list = sorted(chain.from_iterable(Path(self.img_dir).glob(e) for e in img_exts))[skip:end:stride]
-        self.netvlad_db_online = torch.zeros((len(self.image_list), 4096), dtype=torch.float32) # on the CPU-side, online maintained
+        self.netvlad_db_online = torch.zeros((len(self.image_list), 4096), dtype=torch.float32).contiguous()
 
         super().__init__(len(self.image_list))
 
@@ -78,18 +78,19 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
     def nvlad_db_online(self):
         return self.netvlad_db_online
 
-    def query_online(self, idx, skip_window=-1):
+    def query_online(self, idx, skip_window=-1, top_k=10):
         query_desc = self.netvlad_db_online[idx]
         if idx <= skip_window:
             return None, None
         if skip_window < 0:
             skip_window = idx
-        potential_indices=list(range(0, idx - skip_window))
-        sim = torch.matmul(self.netvlad_db_online[potential_indices], query_desc.unsqueeze(0).T)
-        if len(sim) < self.TOPK:
+        q_0 = 0
+        q_1 = idx - skip_window
+        sim = torch.matmul(self.netvlad_db_online[q_0:q_1], query_desc.unsqueeze(0).T)
+        if len(sim) < top_k:
             val, indices = torch.topk(sim, len(sim), dim=0)
         else:
-            val, indices = torch.topk(sim, self.TOPK, dim=0)
+            val, indices = torch.topk(sim, top_k, dim=0)
         return val, indices
 
     def insert_img_offline(self):
@@ -99,6 +100,12 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
             image = image.astype(np.float32).transpose((2, 0, 1)) / 255.0
             image = torch.from_numpy(image).unsqueeze(0)
             self.insert_img(i, image)
+
+    def insert_desc(self, idx, desc):
+        self.netvlad_db_online[idx] = desc
+
+    def get_desc(self, idx):
+        return self.netvlad_db_online[idx]
 
     def end_and_clean(self):
         self.netvlad_model = None

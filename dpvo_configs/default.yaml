@@ -20,9 +20,5 @@ MIXED_PRECISION: True
 
 GRADIENT_BIAS: False
 
-# Loop closure
-LOCAL_LOOP_OFFLINE: False
-MAX_EDGE_AGE: 2000
-
 # classical loop
 CLASSIC_LOOP_CLOSURE: True
