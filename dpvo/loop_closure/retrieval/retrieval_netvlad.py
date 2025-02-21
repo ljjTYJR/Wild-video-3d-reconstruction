@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from einops import parse_shape
 from multiprocessing import Process, Queue, Value
+from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
 
 NMS = 50 # Slow motion gets removed from keyframes anyway. So this is really the keyframe distance
 SKIP_WINDOW = 50
@@ -114,4 +115,5 @@ class RetrievalNetVLAD:
         self.descriptor_buffer[n] = self.nvlad.nvlad_db[tstamp]
 
     def close(self):
-        return
+        self.proc.kill()
+        self.proc.join()

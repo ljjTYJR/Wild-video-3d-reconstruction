@@ -65,8 +65,12 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
     def __init__(self, img_dir, skip, end, stride):
         self.img_dir = img_dir
 
+        self.skip = skip
+        self.end = end
+        self.stride = stride
+
         img_exts = ["*.png", "*.jpeg", "*.jpg"]
-        self.image_list = sorted(chain.from_iterable(Path(self.img_dir).glob(e) for e in img_exts))[skip:end:stride]
+        self.image_list = sorted(chain.from_iterable(Path(self.img_dir).glob(e) for e in img_exts))[self.skip:self.end:self.stride]
         self.netvlad_db_online = torch.zeros((len(self.image_list), 4096), dtype=torch.float32).contiguous()
 
         super().__init__(len(self.image_list))
@@ -110,3 +114,9 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
     def end_and_clean(self):
         self.netvlad_model = None
         torch.cuda.empty_cache()
+
+    @classmethod
+    def from_instance(cls, instance):
+        if not isinstance(instance, cls):
+            raise TypeError("Instance must be of type MyClass")
+        return cls(instance.img_dir, instance.skip, instance.end, instance.stride)

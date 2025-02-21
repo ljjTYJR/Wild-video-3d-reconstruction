@@ -783,7 +783,9 @@ class DPVO:
                 self.rr_register_info()
 
         if self.cfg.CLASSIC_LOOP_CLOSURE:
-            self.long_term_lc.attempt_loop_closure(self.n)
+            loop_close = self.long_term_lc.attempt_loop_closure(self.n)
+            if loop_close:
+                self.rr_register_info()
             # self.long_term_lc.lc_callback()
 
 # NOTE: current not used

@@ -215,6 +215,8 @@ def run_DPVO_PGO_sychronize(pred_poses, loop_poses, loop_ii, loop_jj):
     aa = SE3_to_Sim3(pred_poses.cpu())
     final_est = (aa[[safe_i]] * final_est[[safe_i]].Inv()) * final_est
     output = final_est[:safe_i]
+    # output all poses
+    # output = final_est
     return output
 
 def perform_updates(input_poses, dSloop, ii_loop, jj_loop, iters, ep=0.0, lmbda=1e-6, fix_opt_window=False):

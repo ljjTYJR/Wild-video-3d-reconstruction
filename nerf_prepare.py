@@ -21,20 +21,26 @@ from formatter.colmap_utilis import parse_colmap_camera_params
 from os import path
 
 class NeRFPrepare:
-    def __init__(self, db_path, start_idx, end_idx):
+    def __init__(self, db_path, start_idx, end_idx, intrinsic_scale, output_path):
         self.dataset_dir = db_path
         self.recon_dir = Path(db_path) / "colmap/sparse/0"
         if not os.path.exists(self.recon_dir):
             print("Not the DPVO dataset, the COLMAP dataset")
-            self.recon_dir = Path(db_path) / "reconstruction"
+            self.recon_dir = Path(db_path) / "0"
         self.start_idx = start_idx
         self.end_idx = end_idx
+        self.intrinsic_scale = intrinsic_scale
 
+        self.output_dir = output_path
         parts = self.dataset_dir.split("/")
-        sub_paths = parts[-3:-1]
-        self.output_dir = Path(self.dataset_dir) / f"{sub_paths[0]}_{sub_paths[1]}_select_{self.start_idx}_{self.end_idx}"
+        sub_paths = parts[-3:]
+        if self.output_dir is None:
+            self.output_dir = Path(self.dataset_dir) / f"{sub_paths[1]}_{sub_paths[2]}_select_{self.start_idx}_{self.end_idx}"
+        else:
+            self.output_dir = Path(self.output_dir) / f"{sub_paths[1]}_{sub_paths[2]}_select_{self.start_idx}_{self.end_idx}"
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir, exist_ok=True)
+
         self.keep_original_world_coordinate = False
         self.image_rename_map = None
 
@@ -51,6 +57,13 @@ class NeRFPrepare:
             out = {}  # out = {"camera_model": parse_colmap_camera_params(cam_id_to_camera[1])["camera_model"]}
         else:  # one camera for all frames
             out = parse_colmap_camera_params(cam_id_to_camera[1])
+            # rescale the camera intrinsic
+            out["w"] *= self.intrinsic_scale
+            out["h"] *= self.intrinsic_scale
+            out["fl_x"] *= self.intrinsic_scale
+            out["fl_y"] *= self.intrinsic_scale
+            out["cx"] *= self.intrinsic_scale
+            out["cy"] *= self.intrinsic_scale
 
         frames = []
         for img_id, im_data in img_id_to_image.items():
@@ -107,6 +120,9 @@ if __name__ == "__main__":
     parser.add_argument('--db_path', type=str, default='/media/shuo/T7/duslam/video_images/china_walking_park/seq4/dpvo_colmap_20241031-163917') # the path to the colmap dataset
     parser.add_argument('--start_idx', type=int, default=0)
     parser.add_argument('--end_idx', type=int, default=10_000)
+    # Whether to re-scale the camera intrinsic parameter, since COLMAP runs on 2k while DPVO runs on 512.
+    parser.add_argument('--intrinsic_scale', type=float, default=1.0)
+    parser.add_argument('--output_path', type=str, default=None)
     args = parser.parse_args()
-    nerf_prepare = NeRFPrepare(args.db_path, args.start_idx, args.end_idx)
+    nerf_prepare = NeRFPrepare(args.db_path, args.start_idx, args.end_idx, args.intrinsic_scale, args.output_path)
     nerf_prepare.generate_nf_transform()

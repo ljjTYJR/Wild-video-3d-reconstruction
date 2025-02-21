@@ -46,6 +46,8 @@ class LongTermLoopClosure:
         self.detector = KF.DISK.from_pretrained("depth").to("cuda").eval()
         self.matcher = KF.LightGlue("disk").to("cuda").eval()
 
+        self.num_kpts = 6000
+
     def detect_keypoints(self, images, num_features=2048):
         """ Pretty self explanitory! Alas, we can only use disk w/ lightglue. ORB is brittle """
         _, _, h, w = images.shape
@@ -73,11 +75,11 @@ class LongTermLoopClosure:
         """ Load the triplet of frames """
         image_orig = self.imcache.load_frames([i-1,i,i+1], self.pg.intrinsics.device)
         image = image_orig.float() / 255
-        fl = self.detect_keypoints(image)
+        fl = self.detect_keypoints(image, self.num_kpts)
 
         """ Form keypoint trajectories """
-        trajectories = torch.full((2048, 3), -1, device='cuda', dtype=torch.long)
-        trajectories[:,1] = torch.arange(2048)
+        trajectories = torch.full((self.num_kpts, 3), -1, device='cuda', dtype=torch.long)
+        trajectories[:,1] = torch.arange(self.num_kpts)
 
         out = self.matcher({"image0": fl[0], "image1": fl[1]})
         i0, i1 = out["matches"][0].mT
@@ -87,7 +89,7 @@ class LongTermLoopClosure:
         i2, i1 = out["matches"][0].mT
         trajectories[i1, 2] = i2
 
-        trajectories = trajectories[torch.randperm(2048)]
+        trajectories = trajectories[torch.randperm(self.num_kpts)]
         trajectories = trajectories[trajectories.min(dim=1).values >= 0]
 
         a,b,c = trajectories.mT
@@ -143,6 +145,7 @@ class LongTermLoopClosure:
 
         """ Check if a loop was detected """
         cands = self.retrieval.detect_loop(thresh=self.cfg.LOOP_RETR_THRESH, num_repeat=self.cfg.LOOP_CLOSE_WINDOW_SIZE)
+        lc_result=False
         if cands is not None:
             i, j = cands
 
@@ -158,6 +161,7 @@ class LongTermLoopClosure:
         """ "Flush" the queue of frames into the loop-closure pipeline """
         self.retrieval.save_up_to(n - self.cfg.REMOVAL_WINDOW - 2)
         self.imcache.save_up_to(n - self.cfg.REMOVAL_WINDOW - 1)
+        return lc_result
 
     def terminate(self, n):
         self.retrieval.save_up_to(n-1)
@@ -277,6 +281,6 @@ class LongTermLoopClosure:
         self.pg.poses_[:safe_i] = SE3(res).inv().data
         self.pg.patches_[:safe_i,:,2] /= s.view(safe_i, 1, 1, 1)
         self._rescale_deltas(s1)
-        self.pg.normalize()
+        # self.pg.normalize()
 
         return True
