@@ -108,8 +108,9 @@ class DPVOColmapInit:
         if use_pycolmap:
             # import reconstruction module
             reconstruction = import_module("deep_image_matching.reconstruction")
-            reconst_opts = pycolmap.IncrementalPipelineOptions()
-            reconst_opts.num_threads=min(multiprocessing.cpu_count(), 16)
+            # reconst_opts = pycolmap.IncrementalPipelineOptions()
+            # reconst_opts.num_threads=min(multiprocessing.cpu_count(), 16)
+            reconst_opts = {}
 
             # Run reconstruction
             model = reconstruction.main(

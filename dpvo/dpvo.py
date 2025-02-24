@@ -183,7 +183,7 @@ class DPVO:
         image = self.image_.cpu().numpy()
         image = np.transpose(image, (1, 2, 0))
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        # rr.log(image_label, rr.Image(image))
+        rr.log(image_label, rr.Image(image))
         rr.log(f"world/camera/{self.n}", rr.Pinhole(focal_length=float(self.intrinsics[0][0][0].cpu()), height=self.ht/self.RES, width=self.wd/self.RES))
         rr.log(f"world/camera/{self.n}", rr.Transform3D(translation=translations[-1], rotation=rr.Quaternion(xyzw=rotations[-1]), scale=0.50))
 
@@ -730,10 +730,15 @@ class DPVO:
         patches[:,:,2] = torch.rand_like(patches[:,:,2,0,0,None,None]) # the patch dimension: [B, N, 3, p, p], the 3rd at 3 is the depth; 1st at 3 is W, 2rd at 3 in height
         if self.is_initialized:
             s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
-            patches[:,:,2] = s
+            ref_depth_med = torch.median(depth[mask])
+            ref_depth = (1/s) / ref_depth_med * depth
+            # patches[:,:,2] = s
+            patches[:,:,2] = ref_depth[mask].median()
+        else:
+            ref_depth = depth
 
         self.pg.patches_[self.n] = patches
-        self.pg.set_prior_depth(self.n, depth)
+        self.pg.set_prior_depth(self.n, ref_depth)
 
         ### update network attributes ###
         self.imap_[self.n % self.pmem] = imap.squeeze()
