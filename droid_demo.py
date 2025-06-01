@@ -14,10 +14,8 @@ import argparse
 
 from torch.multiprocessing import Process
 from droid import Droid
-from mast3r_slam import Mast3rSlam
-
 import torch.nn.functional as F
-
+from multiprocessing import Process, Queue
 
 def show_image(image):
     image = image.permute(1, 2, 0).cpu().numpy()
@@ -169,7 +167,7 @@ if __name__ == '__main__':
             # use the mast3r-based SLAM only
             if mast3r_slam is None:
                 args.image_size = [image.shape[2], image.shape[3]]
-                mast3r_slam = Mast3rSlam(args)
+                # mast3r_slam = Mast3rSlam(args)
             mast3r_slam.track(t, image, intrinsics=intrinsics)
 
     # save the result

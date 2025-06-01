@@ -242,6 +242,7 @@ class LongTermLoopClosure:
             return False
 
         """ Estimate Sim(3) transformation """
+        # r, t, s, num_inliers = ransac_umeyama(i_pts, j_pts, iterations=400, threshold=0.5) # threshold shouldn't be too low
         r, t, s, num_inliers = ransac_umeyama(i_pts, j_pts, iterations=400, threshold=0.5) # threshold shouldn't be too low
 
         # Exist if number of inlier matches is too small

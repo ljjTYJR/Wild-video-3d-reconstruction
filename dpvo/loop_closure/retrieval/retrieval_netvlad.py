@@ -6,6 +6,7 @@ import time
 import torch
 import numpy as np
 from einops import parse_shape
+import multiprocessing as mp
 from multiprocessing import Process, Queue, Value
 from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
 

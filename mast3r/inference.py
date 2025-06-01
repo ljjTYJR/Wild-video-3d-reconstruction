@@ -23,7 +23,7 @@ from dust3r.utils.image import format_images, format_mast3r_out, rgb
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 from dust3r.inference import inference
 
-import droid_backends
+# import droid_backends
 from lietorch import SE3
 
 PairOfSlices = namedtuple('ImgPair', 'img1, slice1, img2, slice2')

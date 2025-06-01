@@ -729,16 +729,19 @@ class DPVO:
         # use the metric3D as initialization in the optimization
         patches[:,:,2] = torch.rand_like(patches[:,:,2,0,0,None,None]) # the patch dimension: [B, N, 3, p, p], the 3rd at 3 is the depth; 1st at 3 is W, 2rd at 3 in height
         if self.is_initialized:
-            s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
-            ref_depth_med = torch.median(depth[mask])
-            ref_depth = (1/s) / ref_depth_med * depth
-            # patches[:,:,2] = s
-            patches[:,:,2] = ref_depth[mask].median()
+            if depth is not None and mask is not None:
+                s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
+                ref_depth_med = torch.median(depth[mask])
+                ref_depth = (1/s) / ref_depth_med * depth
+                # patches[:,:,2] = s
+                patches[:,:,2] = ref_depth[mask].median()
         else:
-            ref_depth = depth
+            if depth is not None:
+                ref_depth = depth
 
         self.pg.patches_[self.n] = patches
-        self.pg.set_prior_depth(self.n, ref_depth)
+        if depth is not None:
+            self.pg.set_prior_depth(self.n, ref_depth)
 
         ### update network attributes ###
         self.imap_[self.n % self.pmem] = imap.squeeze()
@@ -791,7 +794,7 @@ class DPVO:
             loop_close = self.long_term_lc.attempt_loop_closure(self.n)
             if loop_close:
                 self.rr_register_info()
-            # self.long_term_lc.lc_callback()
+            self.long_term_lc.lc_callback()
 
 # NOTE: current not used
 # def prepare_colmap_data(dpvo, idx0, idx1):

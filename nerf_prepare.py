@@ -20,13 +20,42 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from formatter.colmap_utilis import parse_colmap_camera_params
 from os import path
 
+COLMAP_SCALE=0.25
+COLMAP_DATASETS = [
+    '/media/shuo/T7/duslam/video_images/china_classical_park_2k/custom_sfm_0_3327/colmap_model/0'
+]
+GLOMAP_SCALE=0.25
+GLOMAP_DATASETS = [
+
+]
+OURS_DATASETS = [
+
+]
+OUTPUT_DIRS=[
+
+]
+YanshanPark={
+    "clips":[
+        [0, 500],
+        [500, 1000],
+        [1000, 1500],
+        [1500, 2000],
+        [2000, 2500],
+        [2500, 3000],
+    ],
+    "colmap":'/media/shuo/T7/duslam/video_images/china_classical_park_2k/custom_sfm_0_3327/colmap_model/0',
+    "glomap":'/media/shuo/T7/duslam/video_images/china_classical_park_2k/custom_sfm_0_3327/glomap_default/0',
+    "ours":'/media/shuo/T7/duslam/video_images/china_classical_park_2k/custom_sfm_0_3327/dpvo/dpvo_2k_retri'
+}
+
 class NeRFPrepare:
     def __init__(self, db_path, start_idx, end_idx, intrinsic_scale, output_path):
         self.dataset_dir = db_path
-        self.recon_dir = Path(db_path) / "colmap/sparse/0"
-        if not os.path.exists(self.recon_dir):
-            print("Not the DPVO dataset, the COLMAP dataset")
-            self.recon_dir = Path(db_path) / "0"
+        # self.recon_dir = Path(db_path) / "colmap/sparse/0"
+        # if not os.path.exists(self.recon_dir):
+        #     print("Not the DPVO dataset, the COLMAP dataset")
+        #     self.recon_dir = Path(db_path) / "0"
+        self.recon_dir = Path(db_path)
         self.start_idx = start_idx
         self.end_idx = end_idx
         self.intrinsic_scale = intrinsic_scale
@@ -100,6 +129,20 @@ class NeRFPrepare:
                 if not use_single_camera_mode:  # add the camera parameters for this frame
                     frame.update(parse_colmap_camera_params(cam_id_to_camera[im_data.camera_id]))
 
+                frames.append(frame)
+
+        collected_frame_ids = [frame["colmap_im_id"] for frame in frames]
+        min_collect_frame_id = min(collected_frame_ids)
+        # add images if there is no enough images in the dataset!
+        for i in range(self.start_idx, self.end_idx):
+            if i not in collected_frame_ids:
+                frame = {
+                    "file_path": f"../../images/{i:06d}.png",
+                    "transform_matrix": frames[min_collect_frame_id - self.start_idx]["transform_matrix"],
+                    "colmap_im_id": i,
+                }
+                if not use_single_camera_mode:
+                    frame.update(parse_colmap_camera_params(cam_id_to_camera[1]))
                 frames.append(frame)
 
         out["frames"] = frames

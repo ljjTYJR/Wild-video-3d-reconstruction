@@ -4,7 +4,6 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 import os.path as osp
 ROOT = osp.dirname(osp.abspath(__file__))
 
-"""
 setup(
     name='droid_backends',
     ext_modules=[
@@ -30,7 +29,7 @@ setup(
     ],
     cmdclass={ 'build_ext' : BuildExtension }
 )
-
+"""
 setup(
     name='lietorch',
     version='0.2',
@@ -60,6 +59,8 @@ setup(
     ],
     cmdclass={ 'build_ext' : BuildExtension }
 )
+"""
+
 """
 setup(
     name='dpvo',
@@ -93,3 +94,4 @@ setup(
     cmdclass={
         'build_ext': BuildExtension
     })
+"""

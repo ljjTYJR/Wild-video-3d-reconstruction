@@ -8,7 +8,7 @@ from .lietorch import SE3
 # from .loop_closure.optim_utils import reduce_edges
 from .utils import *
 from .utils import matrix_to_quaternion
-import droid_backends
+# import droid_backends
 
 class PatchGraph:
     """ Dataclass for storing variables """

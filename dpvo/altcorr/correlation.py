@@ -54,7 +54,8 @@ def patchify(net, coords, radius, mode='bilinear'):
     patches = PatchLayer.apply(net, coords, radius)
 
     if mode == 'bilinear':
-        offset = (coords - coords.floor()).to(net.device)
+        # offset = (coords - coords.floor()).to(net.device)
+        offset = (coords - coords.floor())
         dx, dy = offset[:,:,None,None,None].unbind(dim=-1)
 
         d = 2 * radius + 1
