@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from einops import parse_shape
 import multiprocessing as mp
+import queue
 from multiprocessing import Process, Queue, Value
 from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
 
@@ -38,8 +39,8 @@ class RetrievalNetVLAD:
 
         self.nvlad = nvlad_db
 
-        self.in_queue = Queue(maxsize=20)
-        self.out_queue = Queue(maxsize=20)
+        self.in_queue = Queue(maxsize=40)
+        self.out_queue = Queue(maxsize=40)
         ready = Value('i', 0)
         self.proc = Process(target=_dvlad_loop, args=(self.in_queue, self.out_queue, self.nvlad, ready))
         self.proc.start()
@@ -62,6 +63,7 @@ class RetrievalNetVLAD:
             if n <= c:
                 assert not self.stored_indices[n]
                 desc = self.descriptor_buffer.pop(n)
+                desc = desc.contiguous()
                 self.in_queue.put((n, desc))
                 self.stored_indices[n] = True
                 self.being_processed += 1

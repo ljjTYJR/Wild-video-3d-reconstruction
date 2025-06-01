@@ -83,14 +83,16 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
         return self.netvlad_db_online
 
     def query_online(self, idx, skip_window=-1, top_k=10):
-        query_desc = self.netvlad_db_online[idx]
+        query_desc = self.netvlad_db_online[idx].detach().clone()
         if idx <= skip_window:
             return None, None
         if skip_window < 0:
             skip_window = idx
         q_0 = 0
         q_1 = idx - skip_window
-        sim = torch.matmul(self.netvlad_db_online[q_0:q_1], query_desc.unsqueeze(0).T)
+
+        db_descs = self.netvlad_db_online[q_0:q_1].detach().clone()
+        sim = torch.matmul(db_descs, query_desc.unsqueeze(0).T)
         if len(sim) < top_k:
             val, indices = torch.topk(sim, len(sim), dim=0)
         else:

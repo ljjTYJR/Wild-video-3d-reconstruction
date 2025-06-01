@@ -55,5 +55,5 @@ Use the [Mast3R model](https://github.com/naver/mast3r) and [DROID-SLAM](https:/
 - [ ] For `mast3r-slam`, the front-end and the back-end is implemented in two separate processes.
 
 # Install
-- `pip install thirdparty/lietorch`
+- `pip install thirdparty/lietorch` // we remove the lietorch installation in the parent directory.
 -

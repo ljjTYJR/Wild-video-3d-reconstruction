@@ -195,6 +195,8 @@ if __name__ == '__main__':
     if args.set_seed:
         seed_all(1)
 
+    torch.multiprocessing.set_start_method('spawn', force=True)
+
     # create the logging file
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     exp_dir = Path(f"experiments/{args.exp_name}_{current_time}")

@@ -17,6 +17,8 @@ from droid import Droid
 import torch.nn.functional as F
 from multiprocessing import Process, Queue
 
+from dpvo.stream import video_stream
+
 def show_image(image):
     image = image.permute(1, 2, 0).cpu().numpy()
     cv2.imshow('image', image / 255.0)
@@ -107,7 +109,7 @@ if __name__ == '__main__':
     parser.add_argument("--depthdir", type=str, help="path to image directory")
     parser.add_argument("--calib", type=str, help="path to calibration file")
     parser.add_argument("--t0", default=0, type=int, help="starting frame")
-    parser.add_argument("--stride", default=1, type=int, help="frame stride")
+    parser.add_argument("--stride", default=3, type=int, help="frame stride")
 
     parser.add_argument("--droid_weights", default="checkpoints/droid.pth")
     parser.add_argument("--buffer", type=int, default=512)
@@ -148,21 +150,36 @@ if __name__ == '__main__':
     if args.reconstruction_path is not None:
         args.upsample = True
 
+    # process the input images
+    # queue = Queue(maxsize=8) #image queue
+    # if os.path.isdir(args.imagedir):
+    #     reader = Process(target=image_stream, args=(queue, args.imagedir, None, args.calib, args.stride))
+    # else:
+    #     reader = Process(target=video_stream, args=(queue, args.imagedir, args.calib, args.stride, 0))
+    # reader.start()
+
     tstamps = []
     for (t, image, depth, intrinsics) in tqdm(image_stream(args.imagedir, args.depthdir, args.calib, args.stride)):
+    # while True:
+    #     (t, image, depth, intrinsics) = queue.get()
         if t < args.t0:
             continue
 
         if not args.disable_vis:
             show_image(image[0])
 
-        # choose which slam system we will use, the droid(optical flow) or the mast3r. First, we only use one of them
+        # TODO: type conversion
+        # image = torch.as_tensor(image).permute(2, 0, 1)
+        # image = image[None]
+        # intrinsics = torch.as_tensor(intrinsics).float()
+
         if not args.mast3r_slam_only:
             if droid_slam is None:
                 args.image_size = [image.shape[2], image.shape[3]]
                 droid_slam = Droid(args)
 
-            droid_slam.track(t, image, depth, intrinsics=intrinsics)
+            # droid_slam.track(t, image, depth, intrinsics=intrinsics)
+            droid_slam.track(t, image, None, intrinsics=intrinsics)
         else:
             # use the mast3r-based SLAM only
             if mast3r_slam is None:
