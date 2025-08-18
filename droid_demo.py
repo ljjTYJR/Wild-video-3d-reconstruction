@@ -1,6 +1,5 @@
 import sys
 sys.path.append('droid_slam')
-sys.path.append('mast3r_slam')
 
 from tqdm import tqdm
 import numpy as np
@@ -12,8 +11,8 @@ import glob
 import time
 import argparse
 
+from droid_slam.droid import Droid
 from torch.multiprocessing import Process
-from droid import Droid
 import torch.nn.functional as F
 from multiprocessing import Process, Queue
 
@@ -181,10 +180,8 @@ if __name__ == '__main__':
             # droid_slam.track(t, image, depth, intrinsics=intrinsics)
             droid_slam.track(t, image, None, intrinsics=intrinsics)
         else:
-            # use the mast3r-based SLAM only
             if mast3r_slam is None:
                 args.image_size = [image.shape[2], image.shape[3]]
-                # mast3r_slam = Mast3rSlam(args)
             mast3r_slam.track(t, image, intrinsics=intrinsics)
 
     # save the result

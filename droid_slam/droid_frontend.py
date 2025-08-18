@@ -8,15 +8,11 @@ from factor_graph import FactorGraph
 import droid_backends
 
 from droid_slam.rerun_visualizer import get_current_color_points
-from dust3r.dust3r_type import set_as_dust3r_image, dust3r_inference
-from mast3r.model import AsymmetricMASt3R
-from mast3r.inference import mast3r_inference_init, mast3r_inference
 import torch.nn.functional as F
 from droid_utils import droid_transform
 import roma
 from PIL import Image
 
-import open3d as o3d
 class DroidFrontend:
     def __init__(self, net, video, vis, args):
         self.video = video
@@ -45,24 +41,8 @@ class DroidFrontend:
 
         self.use_gt_calib = True if args.calib is not None else False
 
-        # Mast3R related settings
-        self.mast3r_pred = args.mast3r_pred
-        self.mast3r_init_only = args.mast3r_init_only
-        self.mast3r_batch_size=1
-        self.mast3r_schedule='cosine'
-        self.mast3r_lr=0.01
         self.opt_iter=300
-        self.mast3r_model_path="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
-        if self.mast3r_pred:
-            self.mast3r_model=AsymmetricMASt3R.from_pretrained(self.mast3r_model_path).to('cuda').eval()
-        else:
-            self.mast3r_model=None
-        self.mast3r_image_buffer=[] # a mast3r frame buffer for mast3r inference
-        self.mast3r_window = 8 # TODO: hyper-parameters
-        # self.mast3r_window_pose = torch.zeros(self.mast3r_window, 4, 4).cuda()
-        self.mast3r_window_depths = torch.zeros(self.mast3r_window, self.video.ht, self.video.wd).cuda()
         self.RES = 8.0
-        self.mast3r_keyframe = 0
 
         # visualizer
         self.rr_vis = vis
@@ -187,92 +167,13 @@ class DroidFrontend:
             # update visualization
             self.video.dirty[self.graph.ii.min():self.t1] = True
 
-    def __mast3r_update0(self):
-        """ This the the original mast3r update optimization, use the mast3r as the initialization, not used now. """
-        # first, is there new keyframe coming in? # TODO: now, the keyframe control is based on the DROID strategy
-        if self.mast3r_keyframe == self.t1: # No new keyframe
-            return
-        elif self.mast3r_keyframe < self.t1: # new keyframe
-            assert self.mast3r_keyframe == self.t1 - 1
-            # organize the Mast3R window and conducting the local alignment
-            # what do we need? --> the image (for mast3r model inference); the camera poses (from the DROID); the fixed initial point cloud(for scale alignment)
-            # we choose from the latest mast3r_window frames from droid.video and run dust3r-like global alignment
-            mast3r_t0 = max(self.t1 - self.mast3r_window, 0)
-            mast3r_t1 = self.t1 # it means there are totally t1 frames, the index is t1-1
-            # prepare the Mast3R window, for images, the index always start from 0.
-            mast3r_images = [set_as_dust3r_image(self.video.images[i].clone(), i-mast3r_t0) for i in range(mast3r_t0, mast3r_t1)]
-            mast3r_cam_poses = self.video.poses[mast3r_t0:mast3r_t1].clone()
-            mast3r_inv_depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
-            mast3r_intrinsic = self.video.intrinsics[0].clone()
-            # do the global alignment to solve the last frame prediction only!
-            scene = mast3r_inference(mast3r_images, mast3r_cam_poses, mast3r_inv_depths, self.RES, mast3r_intrinsic, self.mast3r_model, 'cuda')
-            opt_depth = scene.get_opt_depth_droid # the returned depth is the real depth instead of inverse, for droid, there should be inverse
-            opt_pose = scene.get_opt_pose_droid
-            # sychronize the depth and pose to the DROID
-            opt_depth = F.interpolate(opt_depth[None][None], scale_factor=1/self.RES, mode='bilinear').squeeze()
-            # TODO: Do we need to initialize the disps? We only need to feed the disps_sens.
-            # self.video.disps[self.t1 - 1] = 1.0 / opt_depth
-            self.video.disps_sens[self.t1 - 1] = 1.0 / opt_depth
-            # NOTE: the droid pose is world2camera, while the mast3r pose is camera2world
-            droid_opt_pose = SE3(opt_pose).inv().data
-            self.video.poses[self.t1 - 1] = droid_opt_pose
-
-            ### DEBUG: visualize the optimized point cloud from mast3r prediction
-            """
-            fixed_pts3d = scene.get_fixed_pts3d()[:scene.known_cams] # BxNx3
-            opt_pts3d = scene.get_opt_pts3d() # 1xNx3
-            pts3d = torch.cat((fixed_pts3d, opt_pts3d), dim=0) # (B+1)xNx3
-            pcd_all = o3d.geometry.PointCloud()
-            for i in range(len(pts3d)):
-                pcd_tmp = o3d.geometry.PointCloud()
-                pcd_tmp.points = o3d.utility.Vector3dVector(pts3d[i].cpu().numpy())
-                if i == len(pts3d) - 1:
-                    # orange
-                    pcd_tmp.paint_uniform_color([1, 0.706, 0])
-                else:
-                    # blue
-                    pcd_tmp.paint_uniform_color([0, 0.651, 0.929])
-                pcd_all += pcd_tmp
-            o3d.visualization.draw_geometries([pcd_all])
-            """
-
-            # --------DBUEG: visualize the final optimized point cloud--------
-            """
-            _poses = SE3(self.video.poses[mast3r_t0:mast3r_t1]).inv().data
-            _depths = self.video.disps[mast3r_t0:mast3r_t1].clone()
-            points = droid_backends.iproj(_poses, _depths, self.video.intrinsics[0])
-            pcd_all = o3d.geometry.PointCloud()
-            for i in range(len(points)):
-                _points = points[i].cpu().numpy().reshape(-1, 3)
-                # clip the depths of _points to 3*median
-                _points = _points
-                _pcd = o3d.geometry.PointCloud()
-                _pcd.points = o3d.utility.Vector3dVector(_points)
-                _color = self.video.images[i+mast3r_t0][[2,1,0], 3::8,3::8].cpu().numpy().transpose(1,2,0) / 255.0
-                _color = _color.reshape(-1,3)
-                _pcd.colors = o3d.utility.Vector3dVector(_color)
-                pcd_all += _pcd
-            o3d.visualization.draw_geometries([pcd_all])
-            """
-            # -----------------------------------------------------------------
-
-            # update the keyframe index
-            self.mast3r_keyframe = self.mast3r_keyframe + 1
-
-            # TODO: better organize the code
-            self.__droid_refine()
-
-        else: # error frames
-            raise ValueError("Invalid keyframe index")
-
     def __initialize(self):
         """ initialize the SLAM system """
 
         self.t0 = 0
         self.t1 = self.video.counter.value
 
-        if self.use_gt_calib and self.mast3r_pred:
-            raise ValueError("Error: choose one of the calibration method")
+        """
         ### use the Mast3R for prediction
         if self.mast3r_pred:
             # push in images
@@ -307,7 +208,7 @@ class DroidFrontend:
                 del self.mast3r_model
                 self.mast3r_model = None
                 torch.cuda.empty_cache()
-
+        """
         self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 
         for itr in range(8):
@@ -323,7 +224,6 @@ class DroidFrontend:
                 rr_iter += 1
 
         # 1. visualize the DROID optimized point cloud
-        # DEBUG: up-sample the generated depth map and compared to initial mast3r prediction.
         # 1. the DROID optimized point cloud
         """
         droid_depths = (1 / self.video.disps[:self.t1].clone())[None]
@@ -376,7 +276,6 @@ class DroidFrontend:
             self.video.dirty[:self.t1] = True
 
         self.graph.rm_factors(self.graph.ii < self.warmup-4, store=True)
-        self.mast3r_keyframe = self.t1
 
     def __call__(self):
         """ main update """
@@ -387,11 +286,7 @@ class DroidFrontend:
 
         # do update
         elif self.is_initialized and self.t1 < self.video.counter.value: # means new frame comes in
-            if self.mast3r_pred:
-                # self.___motion_only_ba_detection()
-                self.__update()
-            else:
-                self.__update()
+            self.__update()
 
             if self.rr_vis is not None:
                 self.rr_vis(True, True, True, True, None)

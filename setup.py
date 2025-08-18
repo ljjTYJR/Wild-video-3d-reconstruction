@@ -1,13 +1,25 @@
 from setuptools import setup, find_packages
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+import os
 
 import os.path as osp
 ROOT = osp.dirname(osp.abspath(__file__))
 
-"""
+# Set parallel jobs if not already set
+if 'MAX_JOBS' not in os.environ:
+    import multiprocessing
+    os.environ['MAX_JOBS'] = str(min(multiprocessing.cpu_count(), 8))  # Use available cores, max 8
+
+# Enable verbose compilation
+os.environ['VERBOSE'] = '1'
+
+# Removed parallel extension building - caused build errors
+
 setup(
-    name='droid_backends',
+    name='droid-slam',
+    packages=find_packages(),
     ext_modules=[
+        # droid_backends extensions
         CUDAExtension('droid_backends',
             include_dirs=[osp.join(ROOT, 'thirdparty/eigen')],
             sources=[
@@ -27,14 +39,7 @@ setup(
                     '-gencode=arch=compute_86,code=sm_86',
                 ]
             }),
-    ],
-    cmdclass={ 'build_ext' : BuildExtension }
-)
-"""
-setup(
-    name='dpvo',
-    packages=find_packages(),
-    ext_modules=[
+        # dpvo extensions  
         CUDAExtension('cuda_corr',
             sources=['dpvo/altcorr/correlation.cpp', 'dpvo/altcorr/correlation_kernel.cu'],
             extra_compile_args={
@@ -60,6 +65,5 @@ setup(
                 'dpvo/lietorch/src/lietorch_cpu.cpp'],
             extra_compile_args={'cxx': ['-O3'], 'nvcc': ['-O3'],}),
     ],
-    cmdclass={
-        'build_ext': BuildExtension
-    })
+    cmdclass={'build_ext': BuildExtension}
+)
