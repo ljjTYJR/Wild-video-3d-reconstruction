@@ -129,10 +129,6 @@ if __name__ == '__main__':
     parser.add_argument("--backend_nms", type=int, default=3)
     parser.add_argument("--upsample", action="store_true")
     parser.add_argument("--reconstruction_path", help="path to saved reconstruction")
-    parser.add_argument("--mast3r_pred", action="store_true")
-    parser.add_argument("--mast3r_init_only", action="store_true")
-    parser.add_argument("--mast3r_slam_only", action="store_true") # whether to use DROID or not
-    parser.add_argument("--mast3r_weights", default="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth") # whether to use DROID or not
     parser.add_argument("--rerun", action="store_true")
 
     # parser.add_argument("--sea_rafts_weights", default="checkpoints/Tartan-C-T-TSKH-spring540x960-M.pth")
@@ -143,7 +139,6 @@ if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn')
 
     droid_slam = None
-    mast3r_slam = None
 
     # need high resolution depths
     if args.reconstruction_path is not None:
@@ -172,25 +167,17 @@ if __name__ == '__main__':
         # image = image[None]
         # intrinsics = torch.as_tensor(intrinsics).float()
 
-        if not args.mast3r_slam_only:
-            if droid_slam is None:
-                args.image_size = [image.shape[2], image.shape[3]]
-                droid_slam = Droid(args)
+        if droid_slam is None:
+            args.image_size = [image.shape[2], image.shape[3]]
+            droid_slam = Droid(args)
 
             # droid_slam.track(t, image, depth, intrinsics=intrinsics)
             droid_slam.track(t, image, None, intrinsics=intrinsics)
-        else:
-            if mast3r_slam is None:
-                args.image_size = [image.shape[2], image.shape[3]]
-            mast3r_slam.track(t, image, intrinsics=intrinsics)
 
     # save the result
     if droid_slam is not None:
         """ Todo: save the trajectory result """
         pass
-    if mast3r_slam is not None:
-        """ Save the trajectory result """
-        mast3r_slam.save_trajectory('output')
 
     # if args.reconstruction_path is not None:
     #     save_reconstruction(droid_slam, args.reconstruction_path)

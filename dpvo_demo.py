@@ -60,7 +60,6 @@ def run(
     viz=False,
     timeit=False,
     save_reconstruction=False,
-    mast3r=False,
     colmap_init=False,
     motion_filter=False,
     path=None,
@@ -126,7 +125,7 @@ def run(
         intrinsics = torch.from_numpy(intrinsics).cuda()
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, mast3r=mast3r, colmap_init=colmap_init,
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, colmap_init=colmap_init,
                         motion_filter=motion_filter, path=path, nvlad_db=retrieval)
 
         image = image.cuda()
@@ -212,7 +211,7 @@ if __name__ == '__main__':
     path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}_{args.skip}_{args.end}")
 
     (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.netvlad_img_dir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-                    args.mast3r, args.colmap_init, args.motion_filter, path, args.end)
+                    args.colmap_init, args.motion_filter, path, args.end)
     name = Path(args.imagedir).stem
     trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)
 

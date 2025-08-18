@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import open3d as o3d
 from .lietorch import SE3
 
 all_times = []

@@ -16,16 +16,14 @@ from .net import VONet
 from .utils import *
 from .patchgraph import PatchGraph
 from . import projective_ops as pops
-from .dpvo_mast3r_init import dpvo_mast3r_initialization, dpvo_mast3r_optimization
 
-from mast3r.model import AsymmetricMASt3R
 import rerun as rr
 
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False, mast3r=False,
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False,
                  colmap_init=False, motion_filter=False, path='',
                  nvlad_db=None):
         self.cfg = cfg
@@ -93,14 +91,6 @@ class DPVO:
             rr.init('DPVO Visualization')
             rr.connect()
             rr.set_time_sequence("#frame", 0)
-
-        # Add the Dust3R model for inference
-        self.mast3r_est=True if mast3r else False
-        self.mast3r_model_path="checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
-        if self.mast3r_est:
-            self.mast3r_model=AsymmetricMASt3R.from_pretrained(self.mast3r_model_path).to('cuda').eval()
-        else:
-            self.mast3r_model=None
 
         self.motion_filter=motion_filter
         self.path = path
@@ -497,7 +487,7 @@ class DPVO:
             plt.pause(0.1)
             plt.close()
 
-    def keyframe(self, mast3r_update=True):
+    def keyframe(self):
         cur_key = self.cfg.KEYFRAME_INDEX
         i = self.n - cur_key - 1
         j = self.n - cur_key + 1
@@ -541,17 +531,6 @@ class DPVO:
                 self.long_term_lc.keyframe(k)
 
         else:
-            if mast3r_update and self.mast3r_est:
-                # Use the mast3r model to give the coarse camera poses estimation (only 3D-3D correspondence)
-                if k > self.cfg.PATCH_LIFETIME:
-                    # make use of prior poses as seeds to do the initializatioin
-                    img_idx0 = k-self.cfg.PATCH_LIFETIME
-                    img_idx1 = k+1
-                    # img_idx1 = k-7
-                    images = [self.image_buffer_[i % self.mem] for i in range(img_idx0, img_idx1)]
-                    poses = [SE3(self.pg.poses_[i]) for i in range(img_idx0, img_idx1)]
-                    dpvo_mast3r_optimization(images, poses, pts=None, mast3r_model=self.mast3r_model, fixed=2, intrinsics=self.pg.intrinsics_[img_idx0:img_idx1])
-
             # self.draw_img_matching_target(k, 6, save=True)
             if torch.isnan(self.pg.poses_[k]).any():
                 print("Error: the estimated pose is nan!")
@@ -567,7 +546,7 @@ class DPVO:
 
     def update_get_corr(self):
         with Timer("other", enabled=self.enable_timing):
-            coords = self.reproject() # [B, N, 2, p, p] which indicates the corresponding tracks, it can be implemented by the pycolmap with mast3r initialization
+            coords = self.reproject()
 
             with autocast(enabled=True):
                 corr = self.corr(coords)
@@ -619,7 +598,7 @@ class DPVO:
     def update(self, t0=None):
 
         with Timer("other", enabled=self.enable_timing):
-            coords = self.reproject() # [B, N, 2, p, p] which indicates the corresponding tracks, it can be implemented by the pycolmap with mast3r initialization
+            coords = self.reproject()
 
             with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
@@ -775,24 +754,14 @@ class DPVO:
 
         if self.n == self.warm_up and not self.is_initialized:
             self.is_initialized = True
-            if self.mast3r_est:
-                mast3r_depths, mast3r_poses = dpvo_mast3r_initialization(self.image_buffer_[:self.warm_up], self.mast3r_model, intrinsics=self.pg.intrinsics_[:self.warm_up])
-                self.pg.init_from_prior(mast3r_depths, mast3r_poses, list(range(self.warm_up)), images=self.image_buffer_[:self.warm_up])
-
             for itr in range(12):
                 if self.rr:
                     self.rr_register_info(itr)
-                if self.mast3r_est:
-                    self.update(t0=4) # we fix first two frames to get the scale
-                else:
                     self.update()
 
         elif self.is_initialized:
-            if self.mast3r_est:
-                self.update(t0=4)
-            else:
-                self.update()
-            self.keyframe(mast3r_update=False)
+            self.update()
+            self.keyframe()
             if self.rr:
                 self.rr_register_info()
 
