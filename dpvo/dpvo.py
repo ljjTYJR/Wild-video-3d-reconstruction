@@ -735,6 +735,12 @@ class DPVO:
                 ref_depth = (1/s) / ref_depth_med * depth
                 # patches[:,:,2] = s
                 patches[:,:,2] = ref_depth[mask].median()
+            if depth is not None and mask is None:
+                # s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
+                # ref_depth_med = torch.median(depth)
+                # ref_depth = (1/s) / ref_depth_med * depth
+                # patches[:,:,2] = ref_depth.median()
+                ref_depth = depth
         else:
             if depth is not None:
                 ref_depth = depth
