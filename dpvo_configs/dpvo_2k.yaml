@@ -20,4 +20,4 @@ MIXED_PRECISION: True
 GRADIENT_BIAS: False
 
 # Loop closure
-CLASSIC_LOOP_CLOSURE: True
+loop_enabled: True

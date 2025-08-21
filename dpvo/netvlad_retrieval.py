@@ -13,6 +13,7 @@ from hloc import extractors
 from itertools import chain
 from pathlib import Path
 import tqdm
+import pickle
 
 netvlad_confs={
     "output": "global-feats-netvlad",
@@ -73,6 +74,11 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
         self.image_list = sorted(chain.from_iterable(Path(self.img_dir).glob(e) for e in img_exts))[self.skip:self.end:self.stride]
         self.netvlad_db_online = torch.zeros((len(self.image_list), 4096), dtype=torch.float32).contiguous()
 
+        # Create cache filename based on image directory and parameters
+        cache_dir = Path(self.img_dir).parent / "netvlad_cache"
+        cache_dir.mkdir(exist_ok=True)
+        self.cache_file = cache_dir / f"features_{skip}_{end}_{stride}.pkl"
+
         super().__init__(len(self.image_list))
 
     @property
@@ -99,13 +105,50 @@ class RetrievalNetVLADOffline(RetrievalNetVLAD):
             val, indices = torch.topk(sim, top_k, dim=0)
         return val, indices
 
+    def load_cached_features(self):
+        """Load cached NetVLAD features if they exist."""
+        if self.cache_file.exists():
+            try:
+                with open(self.cache_file, 'rb') as f:
+                    cached_data = pickle.load(f)
+                    if (cached_data['image_list'] == [str(p) for p in self.image_list] and
+                        cached_data['features'].shape == self.netvlad_db.shape):
+                        self.netvlad_db = cached_data['features']
+                        print(f"Loaded cached NetVLAD features from {self.cache_file}")
+                        return True
+            except Exception as e:
+                print(f"Failed to load cached features: {e}")
+        return False
+
+    def save_cached_features(self):
+        """Save NetVLAD features to cache."""
+        try:
+            cached_data = {
+                'image_list': [str(p) for p in self.image_list],
+                'features': self.netvlad_db
+            }
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(cached_data, f)
+            print(f"Saved NetVLAD features to cache: {self.cache_file}")
+        except Exception as e:
+            print(f"Failed to save cached features: {e}")
+
     def insert_img_offline(self):
-        # use tqdm to show the progress
+        """Extract NetVLAD features, using cache if available."""
+        # Try to load cached features first
+        if self.load_cached_features():
+            return
+
+        # If no cache or cache is invalid, extract features
+        print("Extracting NetVLAD features...")
         for i in tqdm.tqdm(range(len(self.image_list))):
             image = read_image(self.image_list[i]) # RGB format
             image = image.astype(np.float32).transpose((2, 0, 1)) / 255.0
             image = torch.from_numpy(image).unsqueeze(0)
             self.insert_img(i, image)
+
+        # Save features to cache
+        self.save_cached_features()
 
     def insert_desc(self, idx, desc):
         self.netvlad_db_online[idx] = desc

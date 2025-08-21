@@ -25,7 +25,7 @@ _C.MOTION_DAMPING = 0.5
 _C.MIXED_PRECISION = True
 
 # classical loop
-_C.CLASSIC_LOOP_CLOSURE = False
+_C.loop_enabled = False
 _C.LOOP_CLOSE_WINDOW_SIZE = 3
 _C.LOOP_RETR_THRESH = 0.50
 

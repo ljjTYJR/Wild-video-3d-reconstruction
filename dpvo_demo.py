@@ -53,7 +53,6 @@ def run(
     imagedir,
     depthdir,
     maskdir,
-    netvlad_img_dir,
     calib,
     stride=1,
     skip=0,
@@ -101,13 +100,9 @@ def run(
 
     # Due to the lack of enough GPU memory, we first extract the global descriptors before the beginning of the VSLAM
     retrieval=None
-    if cfg.CLASSIC_LOOP_CLOSURE:
-        print("--------------------------------")
+    if cfg.loop_enabled:
         print("Extracting global descriptors...")
-        print("--------------------------------")
-        if netvlad_img_dir is None:
-            netvlad_img_dir = imagedir
-        retrieval = RetrievalNetVLADOffline(netvlad_img_dir, skip, end, stride)
+        retrieval = RetrievalNetVLADOffline(imagedir, skip, end, stride)
         retrieval.insert_img_offline()
         retrieval.end_and_clean()
 
@@ -169,7 +164,6 @@ if __name__ == '__main__':
     parser.add_argument('--imagedir', type=str)
     parser.add_argument('--depthdir', type=str)
     parser.add_argument('--maskdir', type=str)
-    parser.add_argument('--netvlad_img_dir', type=str)
     parser.add_argument('--calib', type=str)
     parser.add_argument('--stride', type=int, default=1)
     parser.add_argument('--buffer', type=int, default=1024)
@@ -186,10 +180,12 @@ if __name__ == '__main__':
     parser.add_argument('--set_seed', action="store_true")
     parser.add_argument('--skip', type=int, default=0)
     parser.add_argument('--end', type=int_or_none, default=None)
+    parser.add_argument('--loop_enabled', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
     cfg.BUFFER_SIZE = args.buffer
+    cfg.loop_enabled = args.loop_enabled
 
     if args.set_seed:
         seed_all(1)
@@ -210,7 +206,7 @@ if __name__ == '__main__':
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     path = (Path(args.imagedir).parent).joinpath(f"dpvo_colmap_{time}_{args.skip}_{args.end}")
 
-    (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.netvlad_img_dir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
+    (poses, tstamps), (points, colors, calib) = run(cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.calib, args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
                     args.colmap_init, args.motion_filter, path, args.end)
     name = Path(args.imagedir).stem
     trajectory = PoseTrajectory3D(positions_xyz=poses[:,:3], orientations_quat_wxyz=poses[:, [6, 3, 4, 5]], timestamps=tstamps)

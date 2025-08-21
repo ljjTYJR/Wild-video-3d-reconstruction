@@ -163,3 +163,5 @@ tmp/
 thirdparty/
 DPRetrieval/pybind11
 DBoW2/
+
+CLAUDE.md

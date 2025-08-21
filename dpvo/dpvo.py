@@ -99,7 +99,7 @@ class DPVO:
         self.inlier_ratio_threshold = 0.8
 
         # sim(3) loop closure
-        if self.cfg.CLASSIC_LOOP_CLOSURE:
+        if self.cfg.loop_enabled:
             self.load_long_term_loop_closure(nvlad_db)
 
     @property
@@ -210,7 +210,7 @@ class DPVO:
             from .loop_closure.long_term import LongTermLoopClosure
             self.long_term_lc = LongTermLoopClosure(self.cfg, self.pg, nvlad_db)
         except ModuleNotFoundError as e:
-            self.cfg.CLASSIC_LOOP_CLOSURE = False
+            self.cfg.loop_enabled = False
             print(f"WARNING: {e}")
 
     def load_weights(self, network):
@@ -282,7 +282,7 @@ class DPVO:
 
     def terminate(self):
         """ interpolate missing poses """
-        if self.cfg.CLASSIC_LOOP_CLOSURE:
+        if self.cfg.loop_enabled:
             self.long_term_lc.terminate(self.n)
         self.traj = {}
         for i in range(self.n):
@@ -300,7 +300,7 @@ class DPVO:
 
     def terminate_keyframe(self):
         """ Only report keyframes """
-        if self.cfg.CLASSIC_LOOP_CLOSURE:
+        if self.cfg.loop_enabled:
             self.long_term_lc.terminate(self.n)
         self.traj = {}
         key_frame_timestamps = []
@@ -527,7 +527,7 @@ class DPVO:
             self.n -= 1
             self.pg.m -= self.M
 
-            if self.cfg.CLASSIC_LOOP_CLOSURE:
+            if self.cfg.loop_enabled:
                 self.long_term_lc.keyframe(k)
 
         else:
@@ -742,7 +742,7 @@ class DPVO:
                 self.pg.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
 
-        if self.cfg.CLASSIC_LOOP_CLOSURE:
+        if self.cfg.loop_enabled:
             self.long_term_lc(image, self.n, tstamp)
 
         self.pg.n += 1
@@ -765,7 +765,7 @@ class DPVO:
             if self.rr:
                 self.rr_register_info()
 
-        if self.cfg.CLASSIC_LOOP_CLOSURE:
+        if self.cfg.loop_enabled:
             loop_close = self.long_term_lc.attempt_loop_closure(self.n)
             if loop_close:
                 self.rr_register_info()
