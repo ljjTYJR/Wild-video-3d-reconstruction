@@ -770,12 +770,3 @@ class DPVO:
             if loop_close:
                 self.rr_register_info()
             self.long_term_lc.lc_callback()
-
-# NOTE: current not used
-# def prepare_colmap_data(dpvo, idx0, idx1):
-#     """ Prepare the coarse DPVO-BA result data for the COLMAP refinement """
-#     extrinsics = SE3(dpvo.poses_[idx0:idx1]).inv().matrix().cpu().numpy() # camera to world
-
-#     _intrinsic = dpvo.intrinsics_[0].cpu().numpy() * dpvo.RES
-#     _intrinsic = np.array([[_intrinsic[0], 0, _intrinsic[2]], [0, _intrinsic[1], _intrinsic[3]], [0, 0, 1]])
-#     intrinsic = np.tile(_intrinsic[None], (idx1 - idx0, 1, 1))
