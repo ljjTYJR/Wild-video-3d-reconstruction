@@ -71,6 +71,7 @@ def image_stream(imagedir, depthdir, calib, stride):
                 depth = np.load(depth_file)
             else:
                 depth = cv2.imread(depth_file, cv2.IMREAD_UNCHANGED)
+                depth = depth.astype(np.float32) / 1000.0  # convert to meters
             depth = depth[:h1-h1%16, :w1-w1%16]
             depth_median = np.median(depth[depth > 0])
             depth[depth > 10 * depth_median] = 10 * depth_median
@@ -163,7 +164,7 @@ if __name__ == '__main__':
             args.image_size = [image.shape[2], image.shape[3]]
             droid_slam = Droid(args)
 
-        droid_slam.track(t, image, None, intrinsics=intrinsics)
+        droid_slam.track(t, image, depth, intrinsics=intrinsics)
 
     # if args.reconstruction_path is not None:
     #     save_reconstruction(droid_slam, args.reconstruction_path)

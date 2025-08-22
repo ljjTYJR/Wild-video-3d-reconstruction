@@ -31,7 +31,7 @@ class Droid:
             self.rr_vis = None
 
         # filter incoming frames so that there is enough motion
-        self.filterx = MotionFilter(self.net, self.video, thresh=args.filter_thresh)
+        self.filterx = MotionFilter(self.net, self.video, thresh=args.filter_thresh, enable_depth_alignment=False)
 
         # frontend process
         self.frontend = DroidFrontend(self.net, self.video, self.rr_vis, self.args)

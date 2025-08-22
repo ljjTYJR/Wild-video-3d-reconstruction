@@ -12,7 +12,7 @@ from droid_slam.modules.corr import CorrBlock
 class MotionFilter:
     """ This class is used to filter incoming frames and extract features """
 
-    def __init__(self, net, video, thresh=2.5, device="cuda:0"):
+    def __init__(self, net, video, thresh=2.5, device="cuda:0", enable_depth_alignment=False):
 
         # split net modules
         self.cnet = net.cnet
@@ -22,12 +22,34 @@ class MotionFilter:
         self.video = video
         self.thresh = thresh
         self.device = device
+        self.enable_depth_alignment = enable_depth_alignment
 
         self.count = 0
 
         # mean, std for image normalization
         self.MEAN = torch.as_tensor([0.485, 0.456, 0.406], device=self.device)[:, None, None]
         self.STDV = torch.as_tensor([0.229, 0.224, 0.225], device=self.device)[:, None, None]
+
+    def _align_depth_with_previous(self, depth):
+        """Align received depth with previous optimized depth using robust scale estimation"""
+        prev_disp = self.video.disps[self.video.counter.value-1]
+        depth_disp = torch.where(depth > 0, 1.0 / depth, torch.zeros_like(depth))
+        depth_disp_resized = depth_disp[3::8, 3::8].to(self.device)
+
+        valid_mask = (prev_disp > 0) & (depth_disp_resized > 0)
+        if torch.sum(valid_mask) > 500:
+            ratios = prev_disp[valid_mask] / depth_disp_resized[valid_mask]
+            log_ratios = torch.log(ratios.clamp(1e-6, 1e6))
+            inlier_mask = torch.abs(log_ratios - log_ratios.mean()) < 2.0 * log_ratios.std()
+
+            if torch.sum(inlier_mask) > 100:
+                inlier_ratios = ratios[inlier_mask]
+                sorted_ratios, _ = torch.sort(inlier_ratios)
+                trim_start = int(len(sorted_ratios) * 0.1)
+                trim_end = int(len(sorted_ratios) * 0.9)
+                scale = sorted_ratios[trim_start:trim_end].mean().to('cpu').clamp(0.1, 10.0)
+                return depth / scale
+        return depth
 
     @torch.cuda.amp.autocast(enabled=True)
     def __context_encoder(self, image):
@@ -77,7 +99,8 @@ class MotionFilter:
                 self.count = 0
                 net, inp = self.__context_encoder(inputs[:,[0]])
                 self.net, self.inp, self.fmap = net, inp, gmap
-                # for the following frames, the intrinsic will be set as the first frame
+                if self.enable_depth_alignment and self.video.counter.value > 8 and depth is not None:
+                    depth = self._align_depth_with_previous(depth)
                 self.video.append(tstamp, image[0], None, None, depth, intrinsics / 8.0, gmap, net[0], inp[0])
             else:
                 self.count += 1

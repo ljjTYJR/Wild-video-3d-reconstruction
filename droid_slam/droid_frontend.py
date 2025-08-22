@@ -173,42 +173,6 @@ class DroidFrontend:
         self.t0 = 0
         self.t1 = self.video.counter.value
 
-        """
-        ### use the Mast3R for prediction
-        if self.mast3r_pred:
-            # push in images
-            for i in range(self.t1):
-                mast3r_image = set_as_dust3r_image(self.video.images[i].clone(), i)
-                self.mast3r_image_buffer.append(mast3r_image)
-            # inference
-            with torch.no_grad():
-                # NOTE: the current inference is just aligned with the first frame using 3D-3D correspondence
-                # TODO: use the Dust3R / 2D-2D correspondence to refine the result
-                scene = mast3r_inference_init(self.mast3r_image_buffer, self.mast3r_model, 'cuda') # on the device of the cuda.
-            # prepare the intrinsic parameters
-            focals = scene['focals']; cx = self.video.wd / 2; cy = self.video.ht / 2
-            avg_focal = focals.mean().item()
-            # initialize with the estimated camera poses
-            cam2world = scene['poses']; world2cam = cam2world.inverse()
-                #matrix -> quaternion + translation
-            quats = roma.rotmat_to_unitquat(world2cam[:, :3, :3]) # (x,y,z,w)
-            trans = world2cam[:, :3, 3] # (x,y,z), in the droid, the poses are (xyz, xyzw)
-            mast3r_world2cam = torch.cat((trans, quats), dim=1)
-            self.video.poses[:self.t1] = mast3r_world2cam
-
-            self.video.intrinsics[:self.t1] = torch.tensor([avg_focal, avg_focal, cx, cy]).cuda() / self.RES
-            # prepare the predicted depths
-            mast3r_depths = scene['depths'][None]
-            mast3r_depths = F.interpolate(mast3r_depths, scale_factor=1/self.RES, mode='bilinear').squeeze()
-            # feed the depths into the video frames
-            self.video.disps_sens[:self.t1] = torch.where(mast3r_depths > 0, 1.0/mast3r_depths, 0)
-
-            if self.mast3r_init_only:
-                # delete the model to reduce the memory usage
-                del self.mast3r_model
-                self.mast3r_model = None
-                torch.cuda.empty_cache()
-        """
         self.graph.add_neighborhood_factors(self.t0, self.t1, r=3)
 
         for itr in range(8):
@@ -240,25 +204,6 @@ class DroidFrontend:
             pcd_tmp.colors = o3d.utility.Vector3dVector(color.reshape(-1,3))
             pcd_droid += pcd_tmp
         o3d.visualization.draw_geometries([pcd_droid])
-        """
-
-        # 2. the Mast3R optimized point cloud
-        """
-        mast3r_poses = scene['poses'].cpu().numpy() # (N,4,4)
-        mast3r_intr = self.video.intrinsics[0].cpu().numpy() * self.RES
-        droid_poses = SE3(self.video.poses[:self.t1]).inv().matrix().cpu().numpy() # camera to world
-        pcd_all = o3d.geometry.PointCloud()
-        for i in range(self.t1):
-            mast3r_depth = scene['depths'][i].cpu().numpy()
-            mast3r_points = droid_transform.depth2points(mast3r_depth, mast3r_intr)
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(mast3r_points.reshape(-1,3))
-            color = self.video.images[i][[2,1,0]].cpu().numpy().transpose(1,2,0) / 255.0
-            pcd.colors = o3d.utility.Vector3dVector(color.reshape(-1,3))
-            # pcd.transform(mast3r_poses[i])
-            pcd.transform(droid_poses[i])
-            pcd_all += pcd
-        o3d.visualization.draw_geometries([pcd_all])
         """
 
         # self.video.normalize()
