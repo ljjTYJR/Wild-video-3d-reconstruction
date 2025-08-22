@@ -41,6 +41,5 @@ class DroidBackend:
         graph.update_lowmem(steps=steps)
         graph.clear_edges()
         self.video.dirty[:t] = True
-
         if self.rr_vis is not None:
             self.rr_vis(True, True, True, True, t+1)

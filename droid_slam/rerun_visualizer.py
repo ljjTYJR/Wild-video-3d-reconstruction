@@ -24,7 +24,7 @@ def get_current_color_points(video):
 class RerunVisualizer:
     def __init__(self, video):
         self.video = video
-        rr.init('DROID_Mast3R_SLAM')
+        rr.init('droid_slam_visualizer')
         rr.connect()
         rr.set_time_sequence("#frame", 0)
 

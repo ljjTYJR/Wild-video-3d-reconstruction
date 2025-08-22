@@ -12,7 +12,7 @@ from droid_slam.modules.corr import CorrBlock
 class MotionFilter:
     """ This class is used to filter incoming frames and extract features """
 
-    def __init__(self, net, video, thresh=2.5, mast3r_pred=False, device="cuda:0"):
+    def __init__(self, net, video, thresh=2.5, device="cuda:0"):
 
         # split net modules
         self.cnet = net.cnet
@@ -28,9 +28,6 @@ class MotionFilter:
         # mean, std for image normalization
         self.MEAN = torch.as_tensor([0.485, 0.456, 0.406], device=self.device)[:, None, None]
         self.STDV = torch.as_tensor([0.229, 0.224, 0.225], device=self.device)[:, None, None]
-
-        # whether to use the mast3r prediction
-        self.mast3r_pred = mast3r_pred
 
     @torch.cuda.amp.autocast(enabled=True)
     def __context_encoder(self, image):
@@ -81,11 +78,7 @@ class MotionFilter:
                 net, inp = self.__context_encoder(inputs[:,[0]])
                 self.net, self.inp, self.fmap = net, inp, gmap
                 # for the following frames, the intrinsic will be set as the first frame
-                if self.mast3r_pred:
-                    intrinsics = self.video.intrinsics[0].clone()
-                else:
-                    intrinsics = intrinsics / 8.0
-                self.video.append(tstamp, image[0], None, None, depth, intrinsics, gmap, net[0], inp[0])
+                self.video.append(tstamp, image[0], None, None, depth, intrinsics / 8.0, gmap, net[0], inp[0])
             else:
                 self.count += 1
 

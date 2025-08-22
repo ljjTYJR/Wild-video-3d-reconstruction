@@ -65,7 +65,12 @@ def image_stream(imagedir, depthdir, calib, stride):
 
         depth=None
         if depth_list:
-            depth = np.load(os.path.join(depthdir, depth_list[t]))
+            depth_file = os.path.join(depthdir, depth_list[t])
+            # if npy file
+            if depth_file.endswith(".npy"):
+                depth = np.load(depth_file)
+            else:
+                depth = cv2.imread(depth_file, cv2.IMREAD_UNCHANGED)
             depth = depth[:h1-h1%16, :w1-w1%16]
             depth_median = np.median(depth[depth > 0])
             depth[depth > 10 * depth_median] = 10 * depth_median
@@ -144,14 +149,6 @@ if __name__ == '__main__':
     if args.reconstruction_path is not None:
         args.upsample = True
 
-    # process the input images
-    # queue = Queue(maxsize=8) #image queue
-    # if os.path.isdir(args.imagedir):
-    #     reader = Process(target=image_stream, args=(queue, args.imagedir, None, args.calib, args.stride))
-    # else:
-    #     reader = Process(target=video_stream, args=(queue, args.imagedir, args.calib, args.stride, 0))
-    # reader.start()
-
     tstamps = []
     for (t, image, depth, intrinsics) in tqdm(image_stream(args.imagedir, args.depthdir, args.calib, args.stride)):
     # while True:
@@ -162,24 +159,13 @@ if __name__ == '__main__':
         if not args.disable_vis:
             show_image(image[0])
 
-        # TODO: type conversion
-        # image = torch.as_tensor(image).permute(2, 0, 1)
-        # image = image[None]
-        # intrinsics = torch.as_tensor(intrinsics).float()
-
         if droid_slam is None:
             args.image_size = [image.shape[2], image.shape[3]]
             droid_slam = Droid(args)
 
-            # droid_slam.track(t, image, depth, intrinsics=intrinsics)
-            droid_slam.track(t, image, None, intrinsics=intrinsics)
-
-    # save the result
-    if droid_slam is not None:
-        """ Todo: save the trajectory result """
-        pass
+        droid_slam.track(t, image, None, intrinsics=intrinsics)
 
     # if args.reconstruction_path is not None:
     #     save_reconstruction(droid_slam, args.reconstruction_path)
 
-    # traj_est = droid_slam.terminate(image_stream(args.imagedir, args.calib, args.stride))
+    traj_est = droid_slam.terminate(image_stream(args.imagedir, args.depthdir, args.calib, args.stride))
