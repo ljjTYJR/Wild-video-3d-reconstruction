@@ -93,7 +93,6 @@ def run(
     viz=False,
     timeit=False,
     save_reconstruction=False,
-    motion_filter=False,
     path=None,
     end=None):
 
@@ -131,8 +130,7 @@ def run(
         image, depth, mask, intrinsics = process_tensor_inputs(image, depth, mask, intrinsics)
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz,
-                        motion_filter=motion_filter, path=path, nvlad_db=retrieval)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, path=path, nvlad_db=retrieval)
 
         with Timer("SLAM", enabled=timeit):
             slam(t, image, depth, mask, intrinsics)
@@ -178,7 +176,6 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--save_reconstruction', action="store_true")
     parser.add_argument('--save_trajectory', action="store_true")
-    parser.add_argument('--motion_filter', action="store_true")
     parser.add_argument('--export_colmap', action="store_true")
     parser.add_argument('--set_seed', action="store_true")
     parser.add_argument('--skip', type=int, default=0)
@@ -191,7 +188,7 @@ if __name__ == '__main__':
     cfg.loop_enabled = args.loop_enabled
 
     if args.set_seed:
-        seed_all(1)
+        seed_all(42)
 
     torch.multiprocessing.set_start_method('spawn', force=True)
 
@@ -209,7 +206,7 @@ if __name__ == '__main__':
     (poses, tstamps), (points, colors, calib) = run(
         cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.calib,
         args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-        args.motion_filter, output_path, args.end
+        output_path, args.end
     )
 
     sequence_name = Path(args.imagedir).stem

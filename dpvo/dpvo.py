@@ -23,9 +23,7 @@ autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False,
-                 colmap_init=False, motion_filter=False, path='',
-                 nvlad_db=None):
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False, path='', nvlad_db=None):
         self.cfg = cfg
         self.load_weights(network)
         self.is_initialized = False
@@ -92,7 +90,6 @@ class DPVO:
             rr.connect()
             rr.set_time_sequence("#frame", 0)
 
-        self.motion_filter=motion_filter
         self.path = path
 
         self.inlier_ratio_record = {}
@@ -494,7 +491,7 @@ class DPVO:
         m = self.motionmag(i, j) + self.motionmag(j, i)
 
         k = self.n - cur_key
-        if m / 2 < self.cfg.KEYFRAME_THRESH and self.motion_filter:
+        if m / 2 < self.cfg.KEYFRAME_THRESH:
             print(f"drop frame {self.pg.tstamps_[self.n - cur_key].item()} due to low motion")
             t0 = self.pg.tstamps_[k-1].item()
             t1 = self.pg.tstamps_[k].item()
@@ -757,7 +754,7 @@ class DPVO:
             for itr in range(12):
                 if self.rr:
                     self.rr_register_info(itr)
-                    self.update()
+                self.update()
 
         elif self.is_initialized:
             self.update()
