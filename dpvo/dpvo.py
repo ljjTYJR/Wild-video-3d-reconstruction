@@ -18,6 +18,7 @@ from .patchgraph import PatchGraph
 from . import projective_ops as pops
 
 import rerun as rr
+import traceback
 
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
@@ -31,6 +32,9 @@ class DPVO:
 
         self.M = self.cfg.PATCHES_PER_FRAME
         self.N = self.cfg.BUFFER_SIZE
+        self.enable_global_ba = self.cfg.ENABLE_GLOBAL_BA
+        self.distance_thresh = self.cfg.DISTANCE_THRESH
+        self.use_distance_edges = self.cfg.USE_DISTANCE_EDGES
 
         self.ht = ht    # image height
         self.wd = wd    # image width
@@ -56,6 +60,8 @@ class DPVO:
 
         ### network attributes ###
         self.pmem = self.mem = 36
+        if self.enable_global_ba:
+            self.pmem = self.N  # feature memory for global BA
 
         if self.cfg.MIXED_PRECISION:
             self.kwargs = kwargs = {"device": "cuda", "dtype": torch.half}
@@ -70,8 +76,8 @@ class DPVO:
         ht = ht // RES
         wd = wd // RES
 
-        self.fmap1_ = torch.zeros(1, self.mem, 128, ht // 1, wd // 1, **kwargs)
-        self.fmap2_ = torch.zeros(1, self.mem, 128, ht // 4, wd // 4, **kwargs)
+        self.fmap1_ = torch.zeros(1, self.pmem, 128, ht // 1, wd // 1, **kwargs)
+        self.fmap2_ = torch.zeros(1, self.pmem, 128, ht // 4, wd // 4, **kwargs)
 
         # feature pyramid
         self.pyramid = (self.fmap1_, self.fmap2_)
@@ -281,6 +287,11 @@ class DPVO:
         """ interpolate missing poses """
         if self.cfg.loop_enabled:
             self.long_term_lc.terminate(self.n)
+
+        # Perform global bundle adjustment before termination
+        if self.enable_global_ba:
+            self.global_bundle_adjustment()
+
         self.traj = {}
         for i in range(self.n):
             self.traj[self.pg.tstamps_[i].item()] = self.pg.poses_[i]
@@ -320,7 +331,7 @@ class DPVO:
         """ local correlation volume """
         ii, jj = indicies if indicies is not None else (self.pg.kk, self.pg.jj)
         ii1 = ii % (self.M * self.pmem)
-        jj1 = jj % (self.mem)
+        jj1 = jj % (self.pmem)
         corr1 = altcorr.corr(self.gmap, self.pyramid[0], coords / 1, ii1, jj1, 3)
         corr2 = altcorr.corr(self.gmap, self.pyramid[1], coords / 4, ii1, jj1, 3) # now, the coords will de downsacled by 4 (not integer anymore)
         return torch.stack([corr1, corr2], -1).view(1, len(ii), -1)
@@ -339,7 +350,14 @@ class DPVO:
         net = torch.zeros(1, len(kk), self.DIM, **self.kwargs)
         self.pg.net = torch.cat([self.pg.net, net], dim=1)
 
-    def remove_factors(self, m):
+    def remove_factors(self, m, store: bool):
+        assert self.pg.ii.numel() == self.pg.weight.shape[1]
+        if store:
+            self.pg.ii_inac = torch.cat((self.pg.ii_inac, self.pg.ii[m]))
+            self.pg.jj_inac = torch.cat((self.pg.jj_inac, self.pg.jj[m]))
+            self.pg.kk_inac = torch.cat((self.pg.kk_inac, self.pg.kk[m]))
+            self.pg.weight_inac = torch.cat((self.pg.weight_inac, self.pg.weight[:,m]), dim=1)
+            self.pg.target_inac = torch.cat((self.pg.target_inac, self.pg.target[:,m]), dim=1)
         self.pg.weight = self.pg.weight[:,~m]
         self.pg.target = self.pg.target[:,~m]
 
@@ -347,6 +365,7 @@ class DPVO:
         self.pg.jj = self.pg.jj[~m]
         self.pg.kk = self.pg.kk[~m]
         self.pg.net = self.pg.net[:,~m]
+        assert self.pg.ii.numel() == self.pg.weight.shape[1]
 
     def motion_probe(self):
         """ kinda hacky way to ensure enough motion for initialization """
@@ -385,6 +404,130 @@ class DPVO:
                 self.network.update(net, ctx, corr, None, ii, jj, kk)
 
         return True
+
+    def compute_keyframe_distance(self, i, j, beta=0.5):
+        """Compute distance between keyframes i and j similar to DROID"""
+        if i >= self.n or j >= self.n:
+            return float('inf')
+
+        # Create indices for patch matching between frames i and j
+        ii_i_to_j = torch.full((self.M,), i, device="cuda", dtype=torch.long)
+        jj_i_to_j = torch.full((self.M,), j, device="cuda", dtype=torch.long)
+        kk_i_to_j = torch.arange(self.M * i, self.M * (i + 1), device="cuda", dtype=torch.long)
+
+        ii_j_to_i = torch.full((self.M,), j, device="cuda", dtype=torch.long)
+        jj_j_to_i = torch.full((self.M,), i, device="cuda", dtype=torch.long)
+        kk_j_to_i = torch.arange(self.M * j, self.M * (j + 1), device="cuda", dtype=torch.long)
+
+        # Compute flow magnitude from i to j
+        flow_i_to_j = pops.flow_mag(SE3(self.poses), self.patches, self.intrinsics,
+                                   ii_i_to_j, jj_i_to_j, kk_i_to_j, beta=beta)
+
+        # Compute flow magnitude from j to i
+        flow_j_to_i = pops.flow_mag(SE3(self.poses), self.patches, self.intrinsics,
+                                   ii_j_to_i, jj_j_to_i, kk_j_to_i, beta=beta)
+
+        # Average bidirectional flow
+        distance = 0.5 * (flow_i_to_j.mean() + flow_j_to_i.mean())
+        return distance.item()
+
+    def get_distance_based_edges(self):
+        """Get edges based on distance metric similar to DROID"""
+        if not self.use_distance_edges or self.n < 2:
+            return [], []
+
+        ii_edges, jj_edges = [], []
+
+        # Always include sequential edges
+        for i in range(self.n - 1):
+            ii_edges.append(i)
+            jj_edges.append(i + 1)
+
+        # Add distance-based edges
+        for i in range(self.n):
+            for j in range(i + 2, self.n):  # Skip sequential pairs
+                distance = self.compute_keyframe_distance(i, j)
+                if distance < self.distance_thresh:
+                    ii_edges.append(i)
+                    jj_edges.append(j)
+
+        return ii_edges, jj_edges
+
+    def global_corr(self, coords, ii, jj, kk):
+        """Global correlation using main feature buffers"""
+        # Now just use the regular correlation since features are in main buffers
+        return self.corr(coords, (kk, jj))
+
+    def global_bundle_adjustment(self):
+        """Perform global bundle adjustment using all keyframes"""
+        if not self.enable_global_ba or self.n < 2:
+            return
+
+        print(f"Running global BA on {self.n} keyframes...")
+
+        # Get edges based on distance metric
+        if self.use_distance_edges:
+            ii_edges, jj_edges = self.get_distance_based_edges()
+            print(f"Found {len(ii_edges)} distance-based edges")
+        else:
+            # Fallback to fixed pattern
+            ii_edges, jj_edges = [], []
+            # Sequential connections
+            for i in range(self.n - 1):
+                ii_edges.append(i)
+                jj_edges.append(i + 1)
+            # Long-range connections
+            for i in range(0, self.n, 5):
+                for j in range(i + 10, min(i + 20, self.n)):
+                    ii_edges.append(i)
+                    jj_edges.append(j)
+
+        # Expand edges for all patches
+        ii_global, jj_global = [], []
+        for i, j in zip(ii_edges, jj_edges):
+            ii_global.extend([i] * self.M)
+            jj_global.extend([j] * self.M)
+
+        if not ii_global:
+            return
+
+        ii_global = torch.tensor(ii_global, device="cuda")
+        jj_global = torch.tensor(jj_global, device="cuda")
+        kk_global = []
+        for i in ii_edges:
+            kk_global.extend(range(i * self.M, (i + 1) * self.M))
+        kk_global = torch.tensor(kk_global, device="cuda")
+
+        # Reproject using current poses
+        coords = self.reproject((ii_global, jj_global, kk_global))
+
+        # Get correlations using main feature buffers
+        with autocast(enabled=True):
+            corr = self.global_corr(coords, ii_global, jj_global, kk_global)
+            ctx = self.imap[:, kk_global]
+            net = torch.zeros(1, len(ii_global), self.DIM, **self.kwargs)
+
+            net, (delta, weight, _) = \
+                self.network.update(net, ctx, corr, None, ii_global, jj_global, kk_global)
+
+        # Apply global BA update
+        target = coords[..., self.P//2, self.P//2] + delta.float()
+        weight = weight.float()
+        lmbda = torch.as_tensor([1e-4], device="cuda")
+
+        try:
+            # Global BA optimization
+            fastba.BA(self.poses, self.patches, self.intrinsics,
+                target, weight, lmbda, ii_global, jj_global, kk_global, 1, self.n, 2)
+            print("Global BA completed successfully")
+
+        except Exception as e:
+            print(f"Global BA failed: {e}")
+            traceback.print_exc()
+
+        # update the visualization
+        if self.rr:
+            self.rr_register_info()
 
     def motionmag(self, i, j):
         k = (self.pg.ii == i) & (self.pg.jj == j)
@@ -492,7 +635,6 @@ class DPVO:
 
         k = self.n - cur_key
         if m / 2 < self.cfg.KEYFRAME_THRESH:
-            print(f"drop frame {self.pg.tstamps_[self.n - cur_key].item()} due to low motion")
             t0 = self.pg.tstamps_[k-1].item()
             t1 = self.pg.tstamps_[k].item()
 
@@ -500,7 +642,7 @@ class DPVO:
             self.pg.delta[t1] = (t0, dP)
 
             to_remove = (self.pg.ii == k) | (self.pg.jj == k)
-            self.remove_factors(to_remove)
+            self.remove_factors(to_remove, store=False)
 
             self.pg.kk[self.pg.ii > k] -= self.M
             self.pg.ii[self.pg.ii > k] -= 1
@@ -516,8 +658,8 @@ class DPVO:
 
                 self.imap_[i%self.pmem] = self.imap_[(i+1) % self.pmem]
                 self.gmap_[i%self.pmem] = self.gmap_[(i+1) % self.pmem]
-                self.fmap1_[0,i%self.mem] = self.fmap1_[0,(i+1)%self.mem]
-                self.fmap2_[0,i%self.mem] = self.fmap2_[0,(i+1)%self.mem]
+                self.fmap1_[0,i%self.pmem] = self.fmap1_[0,(i+1)%self.pmem]
+                self.fmap2_[0,i%self.pmem] = self.fmap2_[0,(i+1)%self.pmem]
 
                 self.image_buffer_[i%self.mem] = self.image_buffer_[(i+1) % self.mem]
 
@@ -539,7 +681,7 @@ class DPVO:
             self.inlier_ratio_record[self.pg.tstamps_[ref_frame].item()] = inlier_ratio.item()
         """
         to_remove = self.ix[self.pg.kk] < self.n - self.cfg.REMOVAL_WINDOW
-        self.remove_factors(to_remove)
+        self.remove_factors(to_remove, store=True)
 
     def update_get_corr(self):
         with Timer("other", enabled=self.enable_timing):
@@ -547,7 +689,7 @@ class DPVO:
 
             with autocast(enabled=True):
                 corr = self.corr(coords)
-                ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
+                ctx = self.imap[:,self.pg.kk % (self.M * self.pmem)]
                 self.pg.net, (delta, weight, _) = \
                     self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
 
@@ -574,7 +716,7 @@ class DPVO:
         coords = self.reproject()
         with torch.amp.autocast('cuda', enabled=True):
                 corr = self.corr(coords) # correleation
-                ctx = self.imap[:,self.pg.kk % (self.M * self.mem)]
+                ctx = self.imap[:,self.pg.kk % (self.M * self.pmem)]
                 _, (delta, weight, _) = \
                     self.network.update(self.pg.net, ctx, corr, None, self.pg.ii, self.pg.jj, self.pg.kk)
 
@@ -693,9 +835,6 @@ class DPVO:
                 *_, a,b,c = [1]*3 + self.tlist
                 fac = (c-b) / (b-a)
                 xi = self.cfg.MOTION_DAMPING * fac * (P1 * P2.inv()).log()
-
-                # xi = self.cfg.MOTION_DAMPING * (P1 * P2.inv()).log()
-
                 tvec_qvec = (SE3.exp(xi) * P1).data
                 self.pg.poses_[self.n] = tvec_qvec
             else:
@@ -712,10 +851,6 @@ class DPVO:
                 # patches[:,:,2] = s
                 patches[:,:,2] = ref_depth[mask].median()
             if depth is not None and mask is None:
-                # s = torch.median(self.pg.patches_[self.n-3:self.n,:,2])
-                # ref_depth_med = torch.median(depth)
-                # ref_depth = (1/s) / ref_depth_med * depth
-                # patches[:,:,2] = ref_depth.median()
                 ref_depth = depth
         else:
             if depth is not None:
@@ -728,8 +863,8 @@ class DPVO:
         ### update network attributes ###
         self.imap_[self.n % self.pmem] = imap.squeeze()
         self.gmap_[self.n % self.pmem] = gmap.squeeze()
-        self.fmap1_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 1, 1)
-        self.fmap2_[:, self.n % self.mem] = F.avg_pool2d(fmap[0], 4, 4)
+        self.fmap1_[:, self.n % self.pmem] = F.avg_pool2d(fmap[0], 1, 1)
+        self.fmap2_[:, self.n % self.pmem] = F.avg_pool2d(fmap[0], 4, 4)
         self.image_buffer_[self.n % self.mem] = image
 
         self.counter += 1

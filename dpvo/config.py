@@ -29,4 +29,9 @@ _C.loop_enabled = False
 _C.LOOP_CLOSE_WINDOW_SIZE = 3
 _C.LOOP_RETR_THRESH = 0.50
 
+# global ba
+_C.ENABLE_GLOBAL_BA = False    # Enable global bundle adjustment
+_C.DISTANCE_THRESH = 3.0      # Distance threshold for edge selection
+_C.USE_DISTANCE_EDGES = True  # Use distance-based edge selection
+
 cfg = _C
