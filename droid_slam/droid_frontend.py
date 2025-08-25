@@ -39,8 +39,6 @@ class DroidFrontend:
         self.frontend_thresh = args.frontend_thresh
         self.frontend_radius = args.frontend_radius
 
-        self.use_gt_calib = True if args.calib is not None else False
-
         self.opt_iter=300
         self.RES = 8.0
 
