@@ -18,6 +18,3 @@ MOTION_DAMPING: 0.5
 MIXED_PRECISION: True
 
 GRADIENT_BIAS: False
-
-# Loop closure
-loop_enabled: True

@@ -10,6 +10,7 @@ from evo.core import sync
 from evo.core.metrics import PoseRelation
 from evo.core.trajectory import PoseTrajectory3D
 from evo.tools import file_interface, plot
+from tqdm import tqdm
 
 from dpvo.config import cfg
 from dpvo.dpvo import DPVO
@@ -52,31 +53,39 @@ def tum_image_stream(queue, scene_dir, sequence, stride, skip=0):
     queue.put((-1, image, intrinsics))
 
 @torch.no_grad()
-def run(cfg, network, scene_dir, sequence, stride=1, viz=False, show_img=False):
+def run(cfg, network, scene_dir, sequence, stride=1, viz=False, show_img=False, rerun=False):
 
     slam = None
+
+    # Get total number of images for progress bar
+    images_dir = scene_dir / "rgb"
+    image_list = sorted(images_dir.glob("*.png"))[0::stride]
+    total_frames = len(image_list)
 
     queue = Queue(maxsize=8)
     reader = Process(target=tum_image_stream, args=(queue, scene_dir, sequence, stride, 0))
     reader.start()
 
-    for step in range(sys.maxsize):
-        (t, images, intrinsics) = queue.get()
-        if t < 0: break
+    with tqdm(total=total_frames, desc=f"Processing {sequence}", unit="frames") as pbar:
+        for step in range(sys.maxsize):
+            (t, images, intrinsics) = queue.get()
+            if t < 0: break
 
-        images = torch.as_tensor(images, device='cuda')
-        intrinsics = torch.as_tensor(intrinsics, dtype=torch.float, device='cuda')
+            images = torch.as_tensor(images, device='cuda')
+            intrinsics = torch.as_tensor(intrinsics, dtype=torch.float, device='cuda')
 
-        if show_img:
-            show_image(images[0], 1)
+            if show_img:
+                show_image(images[0], 1)
 
-        if slam is None:
-            slam = DPVO(cfg, network, ht=images.shape[-2], wd=images.shape[-1], viz=viz)
+            if slam is None:
+                slam = DPVO(cfg, network, ht=images.shape[-2], wd=images.shape[-1], viz=viz, rerun=rerun)
 
-        intrinsics = intrinsics.cuda()
+            intrinsics = intrinsics.cuda()
 
-        with Timer("SLAM", enabled=False):
-            slam(t, images, None, None, intrinsics)
+            with Timer("SLAM", enabled=False):
+                slam(t, images, None, None, intrinsics)
+
+            pbar.update(1)
 
     reader.join()
 
@@ -100,6 +109,7 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--opts', nargs='+', default=[])
     parser.add_argument('--save_trajectory', action="store_true")
+    parser.add_argument('--rerun', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
@@ -113,14 +123,14 @@ if __name__ == '__main__':
 
     tum_scenes = [
         "rgbd_dataset_freiburg1_360",
-        # "rgbd_dataset_freiburg1_desk",
-        # "rgbd_dataset_freiburg1_desk2",
-        # "rgbd_dataset_freiburg1_floor",
-        # "rgbd_dataset_freiburg1_plant",
-        # "rgbd_dataset_freiburg1_room",
-        # "rgbd_dataset_freiburg1_rpy",
-        # "rgbd_dataset_freiburg1_teddy",
-        # "rgbd_dataset_freiburg1_xyz",
+        "rgbd_dataset_freiburg1_desk",
+        "rgbd_dataset_freiburg1_desk2",
+        "rgbd_dataset_freiburg1_floor",
+        "rgbd_dataset_freiburg1_plant",
+        "rgbd_dataset_freiburg1_room",
+        "rgbd_dataset_freiburg1_rpy",
+        "rgbd_dataset_freiburg1_teddy",
+        "rgbd_dataset_freiburg1_xyz",
     ]
 
     results = {}
@@ -131,7 +141,7 @@ if __name__ == '__main__':
 
         scene_results = []
         for trial_num in range(args.trials):
-            traj_est, timestamps = run(cfg, args.network, scene_dir, scene, args.stride, args.viz, args.show_img)
+            traj_est, timestamps = run(cfg, args.network, scene_dir, scene, args.stride, args.viz, args.show_img, args.rerun)
 
             traj_est = PoseTrajectory3D(
                 positions_xyz=traj_est[:,:3],

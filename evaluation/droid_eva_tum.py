@@ -103,7 +103,7 @@ if __name__ == '__main__':
             show_image(image)
         droid.track(t, image, intrinsics=intrinsics)
 
-    traj_est = droid.terminate(images)
+    traj_est = droid.terminate(images, ba=False)
 
     ### run evaluation ###
 
