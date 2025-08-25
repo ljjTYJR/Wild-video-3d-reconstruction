@@ -24,7 +24,7 @@ autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
 
 class DPVO:
-    def __init__(self, cfg, network, ht=480, wd=640, viz=False, path='', nvlad_db=None):
+    def __init__(self, cfg, network, ht=480, wd=640, viz=False, path='', nvlad_db=None, rerun=False):
         self.cfg = cfg
         self.load_weights(network)
         self.is_initialized = False
@@ -90,8 +90,8 @@ class DPVO:
             self.start_viewer()
 
         # re-run visualization
-        self.rr = True
-        if self.rr:
+        self.rerun = rerun
+        if self.rerun:
             rr.init('DPVO Visualization')
             rr.connect()
             rr.set_time_sequence("#frame", 0)
@@ -526,7 +526,7 @@ class DPVO:
             traceback.print_exc()
 
         # update the visualization
-        if self.rr:
+        if self.rerun:
             self.rr_register_info()
 
     def motionmag(self, i, j):
@@ -887,14 +887,14 @@ class DPVO:
         if self.n == self.warm_up and not self.is_initialized:
             self.is_initialized = True
             for itr in range(12):
-                if self.rr:
+                if self.rerun:
                     self.rr_register_info(itr)
                 self.update()
 
         elif self.is_initialized:
             self.update()
             self.keyframe()
-            if self.rr:
+            if self.rerun:
                 self.rr_register_info()
 
         if self.cfg.loop_enabled:

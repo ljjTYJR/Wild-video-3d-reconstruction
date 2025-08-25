@@ -94,7 +94,8 @@ def run(
     timeit=False,
     save_reconstruction=False,
     path=None,
-    end=None):
+    end=None,
+    rerun=False):
 
     colmap_init = calib is None
 
@@ -130,7 +131,7 @@ def run(
         image, depth, mask, intrinsics = process_tensor_inputs(image, depth, mask, intrinsics)
 
         if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, path=path, nvlad_db=retrieval)
+            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, path=path, nvlad_db=retrieval, rerun=rerun)
 
         with Timer("SLAM", enabled=timeit):
             slam(t, image, depth, mask, intrinsics)
@@ -181,6 +182,7 @@ if __name__ == '__main__':
     parser.add_argument('--skip', type=int, default=0)
     parser.add_argument('--end', type=int_or_none, default=None)
     parser.add_argument('--loop_enabled', action="store_true")
+    parser.add_argument('--rerun', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
@@ -206,7 +208,7 @@ if __name__ == '__main__':
     (poses, tstamps), (points, colors, calib) = run(
         cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.calib,
         args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-        output_path, args.end
+        output_path, args.end, args.rerun
     )
 
     sequence_name = Path(args.imagedir).stem
