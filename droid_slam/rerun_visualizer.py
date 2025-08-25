@@ -33,7 +33,7 @@ class RerunVisualizer:
         self.camera_label = 'world/camera'
         self.image_label = 'world/image'
 
-        self.filter_thresh = 0.005
+        self.filter_thresh = 0.05
 
     def __call__(self, point, path, camera, image, frame_n=None):
         t0 = 0

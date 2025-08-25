@@ -78,20 +78,20 @@ class Droid:
             # global bundle adjustment
             # self.backend()
 
-    def terminate(self, stream=None):
+    def terminate(self, stream=None, ba=False):
         """ terminate the visualization process, return poses [t, q] """
 
         del self.frontend
 
-        torch.cuda.empty_cache()
-        print("#" * 32)
-        self.backend(7)
+        print("terminating droid slam, BA:", ba)
+        if ba:
+            torch.cuda.empty_cache()
+            print("#" * 32)
+            self.backend(7)
 
-        torch.cuda.empty_cache()
-        print("#" * 32)
-        self.backend(12)
-
-        # visualize the final global BA result
+            torch.cuda.empty_cache()
+            print("#" * 32)
+            self.backend(12)
 
         camera_trajectory = self.traj_filler(stream)
         return camera_trajectory.inv().data.cpu().numpy()
