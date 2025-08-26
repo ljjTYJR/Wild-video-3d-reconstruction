@@ -12,6 +12,7 @@ from multiprocessing import Process, Queue
 from plyfile import PlyElement, PlyData
 from evo.core.trajectory import PoseTrajectory3D
 from loguru import logger
+from tqdm import tqdm
 
 from dpvo.utils import Timer
 from dpvo.dpvo import DPVO
@@ -122,19 +123,21 @@ def run(
     reader.start()
     slam = None
 
-    while True:
-        t, image, depth, mask, intrinsics = queue.get()
-        if t < 0:
-            break
+    with tqdm(desc="Processing frames", unit="frame") as pbar:
+        while True:
+            t, image, depth, mask, intrinsics = queue.get()
+            if t < 0:
+                break
 
-        print(f"Processing frame {t}")
-        image, depth, mask, intrinsics = process_tensor_inputs(image, depth, mask, intrinsics)
+            image, depth, mask, intrinsics = process_tensor_inputs(image, depth, mask, intrinsics)
 
-        if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, path=path, nvlad_db=retrieval, rerun=rerun)
+            if slam is None:
+                slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, path=path, nvlad_db=retrieval, rerun=rerun)
 
-        with Timer("SLAM", enabled=timeit):
-            slam(t, image, depth, mask, intrinsics)
+            with Timer("SLAM", enabled=timeit):
+                slam(t, image, depth, mask, intrinsics)
+
+            pbar.update(1)
 
     for _ in range(12):
         slam.update()

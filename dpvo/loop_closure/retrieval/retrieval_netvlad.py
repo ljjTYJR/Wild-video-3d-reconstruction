@@ -18,7 +18,10 @@ def _dvlad_loop(in_queue, out_queue, vlad_db, ready):
     """ Run vlad retrieval """
     ready.value = 1
     while True:
-        n, desc = in_queue.get()
+        item = in_queue.get()
+        if item is None:  # poison pill to exit gracefully
+            break
+        n, desc = item
         vlad_db.insert_desc(n, desc)
         v, k = vlad_db.query_online(n, SKIP_WINDOW, top_k=1)
         if v is None or k is None:
@@ -35,9 +38,7 @@ class RetrievalNetVLAD:
         # Keep track of detected and closed loops
         self.prev_loop_closes = []
         self.found = []
-
         self.nvlad = nvlad_db
-
         self.in_queue = Queue(maxsize=40)
         self.out_queue = Queue(maxsize=40)
         ready = Value('i', 0)
@@ -96,6 +97,7 @@ class RetrievalNetVLAD:
         self.being_processed -= 1
         if score < thresh:
             return
+        print("the score is", score, "at frame", i, j)
         assert i > j
 
         # Ensure that this edge is not redundant
@@ -117,5 +119,14 @@ class RetrievalNetVLAD:
         self.descriptor_buffer[n] = self.nvlad.nvlad_db[tstamp]
 
     def close(self):
-        self.proc.kill()
-        self.proc.join()
+        # Send poison pill to gracefully shutdown the subprocess
+        if self.proc.is_alive():
+            try:
+                self.in_queue.put(None, timeout=1.0)
+                self.proc.join(timeout=5.0)
+            except:
+                pass
+        # Force terminate if graceful shutdown failed
+        if self.proc.is_alive():
+            self.proc.terminate()
+            self.proc.join()

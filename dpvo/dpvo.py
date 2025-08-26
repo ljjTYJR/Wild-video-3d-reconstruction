@@ -864,6 +864,8 @@ class DPVO:
         self.fmap1_[:, self.n % self.pmem] = F.avg_pool2d(fmap[0], 1, 1)
         self.fmap2_[:, self.n % self.pmem] = F.avg_pool2d(fmap[0], 4, 4)
         self.image_buffer_[self.n % self.mem] = image
+        if self.cfg.loop_enabled:
+            self.long_term_lc(image, self.n, self.counter)
 
         self.counter += 1
         # use enough initial motions for initialization
@@ -874,8 +876,6 @@ class DPVO:
 
         self.pg.n += 1
         self.pg.m += self.M
-        if self.cfg.loop_enabled:
-            self.long_term_lc(image, self.n, self.counter-1)
         # relative pose
         self.append_factors(*self.__edges_forw())
         self.append_factors(*self.__edges_back())

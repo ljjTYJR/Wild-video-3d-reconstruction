@@ -147,6 +147,7 @@ class LongTermLoopClosure:
         cands = self.retrieval.detect_loop(thresh=self.cfg.LOOP_RETR_THRESH, num_repeat=self.cfg.LOOP_CLOSE_WINDOW_SIZE)
         lc_result=False
         if cands is not None:
+            print("Attempting loop closure with", cands)
             i, j = cands
 
             """ A loop was detected. Try to close it """
@@ -167,9 +168,9 @@ class LongTermLoopClosure:
         self.retrieval.save_up_to(n-1)
         self.imcache.save_up_to(n-1)
         self.attempt_loop_closure(n)
-        # if self.lc_in_progress:
-        #     self.lc_callback(skip_if_empty=False)
-        # self.lc_process.get()
+        if self.lc_in_progress:
+            self.lc_callback(skip_if_empty=False)
+        self.lc_process.get()
         self.imcache.close()
         self.lc_pool.close()
         self.retrieval.close()
@@ -225,7 +226,7 @@ class LongTermLoopClosure:
 
         # Early exit
         if i_pts.numel() < MIN_NUM_INLIERS:
-            # print(f"Too few inliers (A): {i_pts.numel()=}")
+            print(f"Too few inliers (A): {i_pts.numel()=}")
             return False
 
         """ Match between the two point clouds """
@@ -238,16 +239,15 @@ class LongTermLoopClosure:
 
         # Early exit
         if i_pts.size < MIN_NUM_INLIERS:
-            # print(f"Too few inliers (B): {i_pts.size=}")
+            print(f"Too few inliers (B): {i_pts.size=}")
             return False
 
         """ Estimate Sim(3) transformation """
-        # r, t, s, num_inliers = ransac_umeyama(i_pts, j_pts, iterations=400, threshold=0.5) # threshold shouldn't be too low
         r, t, s, num_inliers = ransac_umeyama(i_pts, j_pts, iterations=400, threshold=0.5) # threshold shouldn't be too low
 
         # Exist if number of inlier matches is too small
         if num_inliers < MIN_NUM_INLIERS:
-            # print(f"Too few inliers (C): {num_inliers=}")
+            print(f"Too few inliers (C): {num_inliers=}")
             return False
 
         """ Run Pose-Graph Optimization (PGO) """

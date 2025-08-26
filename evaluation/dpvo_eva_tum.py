@@ -130,6 +130,7 @@ if __name__ == '__main__':
     print(cfg, "\n")
 
     torch.manual_seed(1234)
+    torch.multiprocessing.set_start_method('spawn', force=True)
 
     tum_scenes = [
         # "rgbd_dataset_freiburg1_360",
