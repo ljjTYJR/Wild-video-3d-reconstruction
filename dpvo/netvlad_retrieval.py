@@ -46,7 +46,6 @@ class RetrievalNetVLAD:
             pred['global_descriptor'] = pred['global_descriptor'].to(torch.float16)
         self.netvlad_db[idx] = pred['global_descriptor']
 
-
     @torch.no_grad()
     def query(self, idx, skip_window=-1):
         query_desc = self.netvlad_db[idx]
@@ -61,9 +60,8 @@ class RetrievalNetVLAD:
             val, indices = torch.topk(sim, self.TOPK, dim=0)
         return val, indices
 
-
 class RetrievalNetVLADOffline(RetrievalNetVLAD):
-    def __init__(self, img_dir, skip, end, stride):
+    def __init__(self, img_dir, skip=0, end=None, stride=1):
         self.img_dir = img_dir
 
         self.skip = skip

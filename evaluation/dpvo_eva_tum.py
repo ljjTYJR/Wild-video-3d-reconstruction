@@ -15,6 +15,7 @@ from tqdm import tqdm
 from dpvo.config import cfg
 from dpvo.dpvo import DPVO
 from dpvo.plot_utils import plot_trajectory
+from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
 from dpvo.utils import Timer
 
 SKIP = 0
@@ -62,6 +63,13 @@ def run(cfg, network, scene_dir, sequence, stride=1, viz=False, show_img=False, 
     image_list = sorted(images_dir.glob("*.png"))[0::stride]
     total_frames = len(image_list)
 
+    retrieval = None
+    if cfg.loop_enabled:
+        print("Extracting global descriptors...")
+        retrieval = RetrievalNetVLADOffline(images_dir, stride=stride)
+        retrieval.insert_img_offline()
+        retrieval.end_and_clean()
+
     queue = Queue(maxsize=8)
     reader = Process(target=tum_image_stream, args=(queue, scene_dir, sequence, stride, 0))
     reader.start()
@@ -78,7 +86,7 @@ def run(cfg, network, scene_dir, sequence, stride=1, viz=False, show_img=False, 
                 show_image(images[0], 1)
 
             if slam is None:
-                slam = DPVO(cfg, network, ht=images.shape[-2], wd=images.shape[-1], viz=viz, rerun=rerun)
+                slam = DPVO(cfg, network, ht=images.shape[-2], wd=images.shape[-1], viz=viz, nvlad_db=retrieval, rerun=rerun)
 
             intrinsics = intrinsics.cuda()
 
@@ -109,11 +117,13 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--opts', nargs='+', default=[])
     parser.add_argument('--save_trajectory', action="store_true")
+    parser.add_argument('--loop_enabled', action="store_true")
     parser.add_argument('--rerun', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
     cfg.BACKEND_THRESH = args.backend_thresh
+    cfg.loop_enabled = args.loop_enabled
     cfg.merge_from_list(args.opts)
 
     print("\nRunning with config...")
@@ -122,15 +132,15 @@ if __name__ == '__main__':
     torch.manual_seed(1234)
 
     tum_scenes = [
-        "rgbd_dataset_freiburg1_360",
-        "rgbd_dataset_freiburg1_desk",
+        # "rgbd_dataset_freiburg1_360",
+        # "rgbd_dataset_freiburg1_desk",
         "rgbd_dataset_freiburg1_desk2",
-        "rgbd_dataset_freiburg1_floor",
-        "rgbd_dataset_freiburg1_plant",
-        "rgbd_dataset_freiburg1_room",
-        "rgbd_dataset_freiburg1_rpy",
-        "rgbd_dataset_freiburg1_teddy",
-        "rgbd_dataset_freiburg1_xyz",
+        # "rgbd_dataset_freiburg1_floor",
+        # "rgbd_dataset_freiburg1_plant",
+        # "rgbd_dataset_freiburg1_room",
+        # "rgbd_dataset_freiburg1_rpy",
+        # "rgbd_dataset_freiburg1_teddy",
+        # "rgbd_dataset_freiburg1_xyz",
     ]
 
     results = {}

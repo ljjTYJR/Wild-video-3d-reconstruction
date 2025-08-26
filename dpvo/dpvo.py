@@ -11,7 +11,6 @@ from . import altcorr
 from . import lietorch
 from . import ba
 from .lietorch import SE3
-from lightglue import SuperPoint
 from .net import VONet
 from .utils import *
 from .patchgraph import PatchGraph
@@ -670,7 +669,6 @@ class DPVO:
                 self.long_term_lc.keyframe(k)
 
         else:
-            # self.draw_img_matching_target(k, 6, save=True)
             if torch.isnan(self.pg.poses_[k]).any():
                 print("Error: the estimated pose is nan!")
                 raise Exception("Error: the estimated pose is nan!")
@@ -874,14 +872,12 @@ class DPVO:
                 self.pg.delta[self.counter - 1] = (self.counter - 2, Id[0])
                 return
 
-        if self.cfg.loop_enabled:
-            self.long_term_lc(image, self.n, tstamp)
-
         self.pg.n += 1
         self.pg.m += self.M
-
+        if self.cfg.loop_enabled:
+            self.long_term_lc(image, self.n, self.counter-1)
         # relative pose
-        self.append_factors(*self.__edges_forw()) # connect previous patches to the current new frame
+        self.append_factors(*self.__edges_forw())
         self.append_factors(*self.__edges_back())
 
         if self.n == self.warm_up and not self.is_initialized:

@@ -9,7 +9,6 @@ from einops import parse_shape
 import multiprocessing as mp
 import queue
 from multiprocessing import Process, Queue, Value
-from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
 
 NMS = 50 # Slow motion gets removed from keyframes anyway. So this is really the keyframe distance
 SKIP_WINDOW = 50
