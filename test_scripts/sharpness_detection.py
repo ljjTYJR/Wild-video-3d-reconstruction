@@ -9,9 +9,8 @@ def evaluate_sharpness(image_path):
     return laplacian
 
 if __name__ == "__main__":
-    img_dir='/media/shuo/T7/duslam/video_images/fpv3_10fps/failurecase_2/images'
-    log = open('sharpness.log', 'w')
+    img_dir='/media/shuo/T7/rgbd_slam/tum_rgbd/rgbd_dataset_freiburg1_360/initialized/images'
     # iterate over all images in the directory
     for img in os.listdir(img_dir):
         sharpness = evaluate_sharpness(os.path.join(img_dir, img))
-        log.write(f"{img}: {sharpness}\n")
+        print(f"{img}: {sharpness}")

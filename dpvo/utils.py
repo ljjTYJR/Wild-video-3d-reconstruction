@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from .lietorch import SE3
+import cv2
 
 all_times = []
 
@@ -172,3 +173,8 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
         F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
     ].reshape(batch_dim + (4,))
     return standardize_quaternion(out)
+
+def evaluate_sharpness(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return laplacian
