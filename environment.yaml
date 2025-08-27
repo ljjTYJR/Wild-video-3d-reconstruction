@@ -20,3 +20,4 @@ dependencies:
   - suitesparse
   - matplotlib
   - pyyaml
+  - git+https://github.com/cvg/Hierarchical-Localization.git@v1.4
