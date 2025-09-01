@@ -1,23 +1,20 @@
-import torch
-import numpy as np
-import torch.nn.functional as F
-import cv2
 import os
+import traceback
+
+import cv2
 import matplotlib
+import numpy as np
+import rerun as rr
+import torch
+import torch.nn.functional as F
 from matplotlib import pyplot as plt
 
-from . import fastba
-from . import altcorr
-from . import lietorch
-from . import ba
+from . import altcorr, ba, fastba, lietorch
+from . import projective_ops as pops
 from .lietorch import SE3
 from .net import VONet
-from .utils import *
 from .patchgraph import PatchGraph
-from . import projective_ops as pops
-
-import rerun as rr
-import traceback
+from .utils import *
 
 autocast = torch.cuda.amp.autocast
 Id = SE3.Identity(1, device="cuda")
@@ -737,15 +734,15 @@ class DPVO:
                 target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
 
             # if using Python-version BA
-            try:
-                bounds = [0-10, 0-10, self.wd+10, self.ht+10]
-                lmbda=1e-4
-                Gs, patches = ba.BA(SE3(self.poses), self.patches, self.intrinsics,
-                    target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, bounds, fixedp=t0, patches_est=self.patches_est)
-                self.pg.patches_[:] = patches.reshape(self.N, self.M, 3, self.P, self.P)
-                self.pg.poses_[:] = Gs.vec().reshape(self.N, 7)
-            except:
-                print("Warning BA failed...")
+            # try:
+            #     bounds = [0-10, 0-10, self.wd+10, self.ht+10]
+            #     lmbda=1e-4
+            #     Gs, patches = ba.BA(SE3(self.poses), self.patches, self.intrinsics,
+            #         target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, bounds, fixedp=t0, patches_est=self.patches_est)
+            #     self.pg.patches_[:] = patches.reshape(self.N, self.M, 3, self.P, self.P)
+            #     self.pg.poses_[:] = Gs.vec().reshape(self.N, 7)
+            # except:
+            #     print("Warning BA failed...")
 
             points = pops.point_cloud(SE3(self.poses), self.patches[:, :self.pg.m], self.intrinsics, self.ix[:self.pg.m]) # note that it will return all the points so far
             points = (points[...,1,1,:3] / points[...,1,1,3:]).reshape(-1, 3)

@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from .lietorch import SE3
 import cv2
+import numpy as np
 
 all_times = []
 
@@ -178,3 +179,27 @@ def evaluate_sharpness(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     laplacian = cv2.Laplacian(gray, cv2.CV_64F).var()
     return laplacian
+
+def measure_motion(img1, img2, threshold=1.0):
+    # note: the image is now BGR mode, which is the default for OpenCV
+    img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+    img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+    # Compute optical flow (Farnebäck example)
+    flow = cv2.calcOpticalFlowFarneback(
+        img1, img2, None, 0.5, 3, 15, 3, 5, 1.2, 0
+    )
+    magnitude = np.linalg.norm(flow, axis=2)
+
+    mean_flow = np.mean(magnitude)
+    median_flow = np.median(magnitude)
+
+    # Normalized values
+    h, w = img1.shape
+    diag = np.sqrt(h**2 + w**2)
+    mean_norm = mean_flow / diag
+    median_norm = median_flow / diag
+
+    # Motion ratio
+    motion_ratio = np.mean(magnitude > threshold)
+
+    return mean_flow, median_flow, mean_norm, median_norm, motion_ratio

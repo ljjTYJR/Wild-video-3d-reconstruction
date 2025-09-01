@@ -1,26 +1,31 @@
-import cv2
+import datetime
 import glob
 import os
-import torch
-import random
-import datetime
-import numpy as np
-import yaml
 import os.path as osp
-from pathlib import Path
+import random
+import signal
+import sys
+import atexit
 from multiprocessing import Process, Queue
-from plyfile import PlyElement, PlyData
+from pathlib import Path
+
+import cv2
+import numpy as np
+import torch
+import yaml
 from evo.core.trajectory import PoseTrajectory3D
 from loguru import logger
+from plyfile import PlyData, PlyElement
 from tqdm import tqdm
 
-from dpvo.utils import Timer
-from dpvo.dpvo import DPVO
 from dpvo.config import cfg
-from dpvo.stream import image_stream, video_stream, image_stream_limit
-from dpvo.plot_utils import plot_trajectory, save_trajectory_tum_format, save_output_for_COLMAP
-from dpvo.dpvo_colmap_init import DPVOColmapInit
+from dpvo.dpvo import DPVO
+from dpvo.dpvo_colmap_init import run_colmap_initialization
 from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
+from dpvo.plot_utils import (plot_trajectory, save_output_for_COLMAP,
+                             save_trajectory_tum_format)
+from dpvo.stream import image_stream, image_stream_limit, video_stream
+from dpvo.utils import Timer
 
 
 def show_image(image, t=0):
@@ -44,35 +49,6 @@ def seed_all(seed=0):
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-def initialize_colmap(queue, path, warmup_frames=50):
-    colmap_initial_path = f"{path}/initialized/"
-    colmap_initial_images = f"{colmap_initial_path}/images"
-    os.makedirs(colmap_initial_images, exist_ok=True)
-
-    for _ in range(warmup_frames):
-        t, image = queue.get()
-        cv2.imwrite(f"{colmap_initial_images}/{t:06d}.png", image)
-
-    init_recon = DPVOColmapInit(colmap_initial_path)
-    colmap_fx, colmap_fy, colmap_cx, colmap_cy = init_recon.run()
-    print(f"COLMAP initialization: fx={colmap_fx}, fy={colmap_fy}, cx={colmap_cx}, cy={colmap_cy}")
-
-    while not queue.empty():
-        queue.get()
-
-    return np.array([colmap_fx, colmap_fy, colmap_cx, colmap_cy])
-
-def run_colmap_initialization(imagedir, path, skip):
-    # TODO: just read images instead of streaming
-    queue = Queue(maxsize=8)
-    init_stride = 2
-    warmup_frames = 50
-    reader = Process(target=image_stream_limit, args=(queue, imagedir, init_stride, skip))
-    reader.start()
-    calib = initialize_colmap(queue, path, warmup_frames)
-    reader.join()
-    return calib
 
 def process_tensor_inputs(image, depth, mask, intrinsics):
     image = torch.from_numpy(image).permute(2,0,1).cuda()
@@ -188,6 +164,31 @@ if __name__ == '__main__':
     parser.add_argument('--rerun', action="store_true")
     args = parser.parse_args()
 
+    # Add cleanup handlers to prevent Arrow-related SIGTERM errors
+    def cleanup_handler(*args):
+        """Clean shutdown handler to prevent Arrow cleanup issues"""
+        print("\nPerforming clean shutdown...")
+        try:
+            # Force garbage collection
+            import gc
+            gc.collect()
+            # Clean exit without triggering Arrow cleanup
+            os._exit(0)
+        except:
+            os._exit(0)
+    
+    def signal_handler(sig, frame):
+        """Handle interrupt signals gracefully"""
+        print(f"\nReceived signal {sig}, shutting down...")
+        cleanup_handler()
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Register cleanup function for normal exit
+    atexit.register(cleanup_handler)
+
     cfg.merge_from_file(args.config)
     cfg.BUFFER_SIZE = args.buffer
     cfg.loop_enabled = args.loop_enabled
@@ -208,31 +209,47 @@ if __name__ == '__main__':
 
     output_path = Path(args.imagedir).parent / f"dpvo_colmap_{timestamp}_{args.skip}_{args.end}"
 
-    (poses, tstamps), (points, colors, calib) = run(
-        cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.calib,
-        args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
-        output_path, args.end, args.rerun
-    )
+    try:
+        (poses, tstamps), (points, colors, calib) = run(
+            cfg, args.network, args.imagedir, args.depthdir, args.maskdir, args.calib,
+            args.stride, args.skip, args.viz, args.timeit, args.save_reconstruction,
+            output_path, args.end, args.rerun
+        )
 
-    sequence_name = Path(args.imagedir).stem
-    trajectory = PoseTrajectory3D(
-        positions_xyz=poses[:,:3],
-        orientations_quat_wxyz=poses[:, [6, 3, 4, 5]],
-        timestamps=tstamps
-    )
+        sequence_name = Path(args.imagedir).stem
+        trajectory = PoseTrajectory3D(
+            positions_xyz=poses[:,:3],
+            orientations_quat_wxyz=poses[:, [6, 3, 4, 5]],
+            timestamps=tstamps
+        )
 
-    if args.save_trajectory:
-        Path("saved_trajectories").mkdir(exist_ok=True)
-        save_trajectory_tum_format(trajectory, f"saved_trajectories/{sequence_name}.txt")
+        if args.save_trajectory:
+            Path("saved_trajectories").mkdir(exist_ok=True)
+            save_trajectory_tum_format(trajectory, f"saved_trajectories/{sequence_name}.txt")
 
-    if args.plot:
-        Path("trajectory_plots").mkdir(exist_ok=True)
-        plot_trajectory(trajectory,
-                       title=f"DPVO Trajectory Prediction for {sequence_name}",
-                       filename=f"trajectory_plots/{sequence_name}.pdf")
+        if args.plot:
+            Path("trajectory_plots").mkdir(exist_ok=True)
+            plot_trajectory(trajectory,
+                           title=f"DPVO Trajectory Prediction for {sequence_name}",
+                           filename=f"trajectory_plots/{sequence_name}.pdf")
 
-    if args.export_colmap:
-        save_output_for_COLMAP(output_path, tstamps, trajectory, points, colors, True, *calib)
-        with open(f"{output_path}/config.yaml", "w") as f:
-            f.write(cfg.dump())
-            yaml.dump(vars(args), f, default_flow_style=False)
+        if args.export_colmap:
+            save_output_for_COLMAP(output_path, tstamps, trajectory, points, colors, True, *calib)
+            with open(f"{output_path}/config.yaml", "w") as f:
+                f.write(cfg.dump())
+                yaml.dump(vars(args), f, default_flow_style=False)
+        
+        print("DPVO execution completed successfully!")
+        
+    except KeyboardInterrupt:
+        print("\nExecution interrupted by user")
+    except Exception as e:
+        print(f"\nError during execution: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Clean exit to avoid Arrow cleanup issues
+        import gc
+        gc.collect()
+        print("Exiting cleanly...")
+        os._exit(0)

@@ -1,9 +1,9 @@
+import os
 import sys
 from multiprocessing import Process, Queue
 from pathlib import Path
 
 import cv2
-import os
 import evo.main_ape as main_ape
 import numpy as np
 import torch
@@ -15,10 +15,10 @@ from tqdm import tqdm
 
 from dpvo.config import cfg
 from dpvo.dpvo import DPVO
-from dpvo.plot_utils import plot_trajectory
+from dpvo.dpvo_colmap_init import run_colmap_initialization
 from dpvo.netvlad_retrieval import RetrievalNetVLADOffline
-from dpvo.utils import Timer, evaluate_sharpness
-from dpvo.dpvo_colmap_init import DPVOColmapInit
+from dpvo.plot_utils import plot_trajectory
+from dpvo.utils import Timer
 
 SKIP = 0
 
@@ -26,47 +26,6 @@ def show_image(image, t=0):
     image = image.permute(1, 2, 0).cpu().numpy()
     cv2.imshow('image', image / 255.0)
     cv2.waitKey(t)
-
-def run_colmap_initialization(imagedir, path, skip=0, warmup_frames=50, init_stride=2):
-    colmap_initial_path = f"{path}/initialized/"
-    colmap_initial_images = f"{colmap_initial_path}/images"
-    os.makedirs(colmap_initial_images, exist_ok=True)
-
-    from pathlib import Path
-    from itertools import chain
-
-    img_exts = ["*.png", "*.jpeg", "*.jpg"]
-    image_list = sorted(chain.from_iterable(Path(imagedir).glob(e) for e in img_exts))[skip::init_stride]
-
-    if len(image_list) < warmup_frames:
-        raise ValueError(f"Number of images in the directory is less than {warmup_frames}")
-
-    selected_images = []
-    sharpness_threshold = 50.0  # Minimum sharpness threshold
-
-    for imfile in image_list:
-        if len(selected_images) >= warmup_frames:
-            break
-
-        image = cv2.imread(str(imfile), cv2.IMREAD_COLOR)
-        sharpness = evaluate_sharpness(image)
-        if sharpness > sharpness_threshold:
-            cv2.imwrite(f"{colmap_initial_images}/{len(selected_images):06d}.png", image)
-            selected_images.append(imfile)
-
-    if len(selected_images) < warmup_frames:
-        print(f"Warning: Only found {len(selected_images)} sharp images out of {warmup_frames} required")
-        # Fall back to using all available images regardless of sharpness
-        for imfile in image_list[len(selected_images):warmup_frames]:
-            image = cv2.imread(str(imfile), cv2.IMREAD_COLOR)
-            cv2.imwrite(f"{colmap_initial_images}/{len(selected_images):06d}.png", image)
-            selected_images.append(imfile)
-
-    init_recon = DPVOColmapInit(colmap_initial_path)
-    colmap_fx, colmap_fy, colmap_cx, colmap_cy = init_recon.run()
-    print(f"COLMAP initialization: fx={colmap_fx}, fy={colmap_fy}, cx={colmap_cx}, cy={colmap_cy}")
-
-    return colmap_fx, colmap_fy, colmap_cx, colmap_cy
 
 def tum_image_stream(queue, scene_dir, sequence, stride, skip=0, est_intrinsic=None):
     """ image generator """
@@ -76,8 +35,8 @@ def tum_image_stream(queue, scene_dir, sequence, stride, skip=0, est_intrinsic=N
         fx, fy, cx, cy = 517.3, 516.5, 318.6, 255.3
         d_l = np.array([0.2624, -0.9531, -0.0054, 0.0026, 1.1633])
     else:
-        fx, fy, cx, cy = est_intrinsic
-        d_l = np.zeros(5)
+        fx, fy, cx, cy = est_intrinsic[:4]
+        d_l = est_intrinsic[4:]
     K_l = np.array([fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]).reshape(3,3)
 
     image_list = sorted(images_dir.glob("*.png"))[skip::stride]
@@ -117,8 +76,7 @@ def run(cfg, network, scene_dir, sequence, stride=1, viz=False, show_img=False, 
 
     est_intrinsic = None
     if colmap_init:
-        fx, fy, cx, cy = run_colmap_initialization(images_dir, images_dir.parent, skip=SKIP)
-        est_intrinsic = (fx, fy, cx, cy)
+        est_intrinsic = run_colmap_initialization(images_dir, images_dir.parent, skip=SKIP)
     queue = Queue(maxsize=8)
     reader = Process(target=tum_image_stream, args=(queue, scene_dir, sequence, stride, 0, est_intrinsic))
     reader.start()
