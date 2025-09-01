@@ -2,6 +2,7 @@ import glob
 import os
 from multiprocessing import Process, Queue
 from pathlib import Path
+from itertools import chain
 
 import cv2
 import evo.main_ape as main_ape
@@ -11,6 +12,7 @@ from evo.core import sync
 from evo.core.metrics import PoseRelation
 from evo.core.trajectory import PoseTrajectory3D
 from evo.tools import file_interface
+from tqdm import tqdm
 
 from dpvo.config import cfg
 from dpvo.dpvo import DPVO
@@ -26,29 +28,32 @@ def show_image(image, t=0):
     cv2.waitKey(t)
 
 @torch.no_grad()
-def run(cfg, network, imagedir, calib, stride=1, viz=False, show_img=False):
+def run(cfg, network, imagedir, calib, stride=1, viz=False, show_img=False, rerun=False):
 
     slam = None
 
     queue = Queue(maxsize=8)
-    reader = Process(target=image_stream, args=(queue, imagedir, calib, stride, 0))
+    reader = Process(target=image_stream, args=(queue, imagedir, None, None, calib, stride, 0))
     reader.start()
 
-    while 1:
-        (t, image, intrinsics) = queue.get()
-        if t < 0: break
+    with tqdm(desc=f"Processing {imagedir}", unit="frames") as pbar:
+        while 1:
+            (t, image, depth, mask, intrinsics) = queue.get()
+            if t < 0: break
 
-        image = torch.from_numpy(image).permute(2,0,1).cuda()
-        intrinsics = torch.from_numpy(intrinsics).cuda()
+            image = torch.from_numpy(image).permute(2,0,1).cuda()
+            intrinsics = torch.from_numpy(intrinsics).cuda()
 
-        if show_img:
-            show_image(image, 1)
+            if show_img:
+                show_image(image, 1)
 
-        if slam is None:
-            slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz)
+            if slam is None:
+                slam = DPVO(cfg, network, ht=image.shape[1], wd=image.shape[2], viz=viz, rerun=rerun)
 
-        with Timer("SLAM", enabled=False):
-            slam(t, image, intrinsics)
+            with Timer("SLAM", enabled=False):
+                slam(t, image, depth, mask, intrinsics)
+
+            pbar.update(1)
 
     reader.join()
 
@@ -59,7 +64,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--network', type=str, default='checkpoints/dpvo.pth')
-    parser.add_argument('--config', default="config/default.yaml")
+    parser.add_argument('--config', default="dpvo_configs/default.yaml")
     parser.add_argument('--stride', type=int, default=2)
     parser.add_argument('--viz', action="store_true")
     parser.add_argument('--show_img', action="store_true")
@@ -69,6 +74,8 @@ if __name__ == '__main__':
     parser.add_argument('--plot', action="store_true")
     parser.add_argument('--opts', nargs='+', default=[])
     parser.add_argument('--save_trajectory', action="store_true")
+    parser.add_argument('--rerun', action="store_true")
+    parser.add_argument('--colmap_init', action="store_true")
     args = parser.parse_args()
 
     cfg.merge_from_file(args.config)
@@ -97,11 +104,12 @@ if __name__ == '__main__':
     results = {}
     for scene in euroc_scenes:
         imagedir = os.path.join(args.eurocdir, scene, "mav0/cam0/data")
-        groundtruth = "datasets/euroc_groundtruth/{}.txt".format(scene)
+        groundtruth = "euroc_groundtruth/{}.txt".format(scene)
 
         scene_results = []
         for i in range(args.trials):
-            traj_est, timestamps = run(cfg, args.network, imagedir, "calib/euroc.txt", args.stride, args.viz, args.show_img)
+            traj_est, timestamps = run(cfg, args.network, imagedir, "calib/euroc.txt", args.stride, args.viz, args.show_img,
+                                       args.rerun)
 
             images_list = sorted(glob.glob(os.path.join(imagedir, "*.png")))[::args.stride]
             tstamps = [float(x.split('/')[-1][:-4]) for x in images_list]
@@ -130,12 +138,19 @@ if __name__ == '__main__':
 
             scene_results.append(ate_score)
 
-        results[scene] = np.median(scene_results)
-        print(scene, sorted(scene_results))
+        scene_mean = np.mean(scene_results)
+        scene_std = np.std(scene_results)
+        results[scene] = {'mean': scene_mean, 'std': scene_std}
+        print(f"{scene}: mean={scene_mean:.4f}, std={scene_std:.4f}, values={sorted(scene_results)}")
 
-    xs = []
+    means = []
+    stds = []
     for scene in results:
-        print(scene, results[scene])
-        xs.append(results[scene])
+        scene_data = results[scene]
+        print(f"{scene}: mean={scene_data['mean']:.4f}, std={scene_data['std']:.4f}")
+        means.append(scene_data['mean'])
+        stds.append(scene_data['std'])
 
-    print("AVG: ", np.mean(xs))
+    overall_mean = np.mean(means)
+    overall_std = np.mean(stds)
+    print(f"OVERALL: mean={overall_mean:.4f}, avg_std={overall_std:.4f}")

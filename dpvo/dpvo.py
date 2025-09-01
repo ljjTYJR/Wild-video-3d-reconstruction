@@ -383,27 +383,6 @@ class DPVO:
 
         return torch.quantile(delta.norm(dim=-1).float(), 0.5)
 
-    def loop_verify(self, j, i_s):
-        """ loop verification """
-        # test only one
-            # TODO
-        i = i_s[0]
-        kk = torch.arange(i * self.M, (i + 1) * self.M, device="cuda")
-        jj = j * torch.ones_like(kk)
-        ii = self.ix[kk]
-
-        net = torch.zeros(1, len(ii), self.DIM, **self.kwargs)
-        # build identity coord map
-        coords = self.patches[:, kk, 0:2].view(1, self.M, 2, 3, 3)
-
-        with autocast(enabled=self.cfg.MIXED_PRECISION):
-            corr = self.corr(coords, indicies=(kk, jj))
-            ctx = self.imap[:, kk % (self.M * self.pmem)]
-            net, (delta, weight, _) = \
-                self.network.update(net, ctx, corr, None, ii, jj, kk)
-
-        return True
-
     def compute_keyframe_distance(self, i, j, beta=0.5):
         """Compute distance between keyframes i and j similar to DROID"""
         if i >= self.n or j >= self.n:
@@ -754,9 +733,8 @@ class DPVO:
             t0_ = self.n - self.cfg.OPTIMIZATION_WINDOW if self.is_initialized else 1
             t0 = max(t0_, t0 or 1)
 
-            # try:
-                # fastba.BA(self.poses, self.patches, self.intrinsics,
-                #     target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
+            fastba.BA(self.poses, self.patches, self.intrinsics,
+                target, weight, lmbda, self.pg.ii, self.pg.jj, self.pg.kk, t0, self.n, 2)
 
             # if using Python-version BA
             try:
