@@ -1,9 +1,7 @@
+import atexit
 import glob
 import os
 import signal
-import sys
-import atexit
-from itertools import chain
 from multiprocessing import Process, Queue
 from pathlib import Path
 
@@ -11,6 +9,9 @@ import cv2
 import evo.main_ape as main_ape
 import numpy as np
 import torch
+
+# Set multiprocessing start method to avoid CUDA context issues
+torch.multiprocessing.set_start_method('spawn', force=True)
 from evo.core import sync
 from evo.core.metrics import PoseRelation
 from evo.core.trajectory import PoseTrajectory3D
@@ -79,30 +80,34 @@ def run(cfg, network, imagedir, calib, stride=1, viz=False, show_img=False, reru
 
 if __name__ == '__main__':
     # Add cleanup handlers to prevent Arrow-related SIGTERM errors
-    def cleanup_handler(*args):
+    def cleanup_handler(*_):
         """Clean shutdown handler to prevent Arrow cleanup issues"""
         print("\nPerforming clean shutdown...")
         try:
             # Force garbage collection
             import gc
             gc.collect()
+            # Clear CUDA cache to prevent memory issues
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
             # Clean exit without triggering Arrow cleanup
             os._exit(0)
         except:
             os._exit(0)
-    
-    def signal_handler(sig, frame):
+
+    def signal_handler(sig, _):
         """Handle interrupt signals gracefully"""
         print(f"\nReceived signal {sig}, shutting down...")
         cleanup_handler()
-    
+
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     # Register cleanup function for normal exit
     atexit.register(cleanup_handler)
-    
+
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--network', type=str, default='checkpoints/dpvo.pth')
@@ -130,6 +135,12 @@ if __name__ == '__main__':
     print(cfg, "\n")
 
     torch.manual_seed(412)
+    # Set CUDA memory management settings to prevent segfaults
+    if torch.cuda.is_available():
+        # Enable memory cleanup on exit
+        torch.cuda.memory._record_memory_history(enabled=None)
+        # Set conservative memory management
+        os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
     euroc_scenes = [
         # "MH_01_easy",
@@ -153,7 +164,7 @@ if __name__ == '__main__':
 
             scene_results = []
             for i in range(args.trials):
-                traj_est, timestamps = run(cfg, args.network, imagedir, "calib/euroc_est.txt", args.stride, args.viz, args.show_img,
+                traj_est, timestamps = run(cfg, args.network, imagedir, "calib/euroc.txt", args.stride, args.viz, args.show_img,
                                            args.rerun, args.colmap_init)
 
                 images_list = sorted(glob.glob(os.path.join(imagedir, "*.png")))[::args.stride]
@@ -200,7 +211,7 @@ if __name__ == '__main__':
         overall_std = np.mean(stds)
         print(f"OVERALL: mean={overall_mean:.4f}, avg_std={overall_std:.4f}")
         print("EuRoC evaluation completed successfully!")
-        
+
     except KeyboardInterrupt:
         print("\nEvaluation interrupted by user")
     except Exception as e:
