@@ -1,9 +1,11 @@
 import os
-import cv2
-import numpy as np
+from itertools import chain
 from multiprocessing import Process, Queue
 from pathlib import Path
-from itertools import chain
+
+import cv2
+import numpy as np
+
 
 def image_stream(queue, imagedir, depthdir, maskdir, calib, stride, skip=0, end=None):
     """ image generator """
@@ -49,7 +51,6 @@ def image_stream(queue, imagedir, depthdir, maskdir, calib, stride, skip=0, end=
         if 0:
             image = cv2.resize(image, None, fx=0.5, fy=0.5)
             intrinsics = np.array([fx / 2, fy / 2, cx / 2, cy / 2])
-
         else:
             intrinsics = np.array([fx, fy, cx, cy])
 

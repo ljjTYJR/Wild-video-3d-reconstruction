@@ -4,11 +4,14 @@ Specifically, we want to specify the start index and the end index in the datase
 
 The output is the directory with the transforms.json file preparing for the NeRF training
 """
-import numpy as np
+import argparse
 import json
 import os
-import argparse
+from formatter.colmap_utilis import parse_colmap_camera_params
+from os import path
 from pathlib import Path
+
+import numpy as np
 from nerfstudio.data.utils.colmap_parsing_utils import (
     qvec2rotmat,
     read_cameras_binary,
@@ -17,8 +20,6 @@ from nerfstudio.data.utils.colmap_parsing_utils import (
     read_points3D_text,
 )
 from nerfstudio.utils.rich_utils import CONSOLE
-from formatter.colmap_utilis import parse_colmap_camera_params
-from os import path
 
 COLMAP_SCALE=0.25
 COLMAP_DATASETS = [

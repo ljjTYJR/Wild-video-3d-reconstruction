@@ -1,8 +1,9 @@
-import torch
-import torch.nn.functional as F
-from .lietorch import SE3
 import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
+
+from .lietorch import SE3
 
 all_times = []
 
@@ -195,6 +196,9 @@ def measure_motion(img1, img2, threshold=1.0):
 
     # Normalized values
     h, w = img1.shape
+    # measure under 512 resolution
+    scale = 512.0 / max(h, w)
+    mean_flow_scaled = mean_flow * scale
     diag = np.sqrt(h**2 + w**2)
     mean_norm = mean_flow / diag
     median_norm = median_flow / diag
@@ -202,4 +206,4 @@ def measure_motion(img1, img2, threshold=1.0):
     # Motion ratio
     motion_ratio = np.mean(magnitude > threshold)
 
-    return mean_flow, median_flow, mean_norm, median_norm, motion_ratio
+    return mean_flow, mean_flow_scaled, median_flow, mean_norm, median_norm, motion_ratio

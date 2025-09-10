@@ -1,5 +1,6 @@
 # deep image matching-related library
 import os
+import shutil
 from importlib import import_module
 from pathlib import Path
 
@@ -11,8 +12,10 @@ from deep_image_matching.config import Config
 from deep_image_matching.image_matching import ImageMatching
 from deep_image_matching.io.h5_to_db import export_to_colmap
 from deep_image_matching.io.h5_to_openmvg import export_to_openmvg
-from nerfstudio.data.utils.colmap_parsing_utils import (read_cameras_binary,
-                                                        read_images_binary)
+from nerfstudio.data.utils.colmap_parsing_utils import (
+    read_cameras_binary,
+    read_images_binary,
+)
 
 from dpvo.utils import evaluate_sharpness, measure_motion
 
@@ -103,7 +106,7 @@ class DPVOColmapInit:
         )
         timer.update("export_to_colmap")
 
-        use_pycolmap = True
+        use_pycolmap = True # by default, using COLMAP
         try:
             # To be sure, check if pycolmap is available, otherwise skip reconstruction
             pycolmap = import_module("pycolmap")
@@ -112,6 +115,7 @@ class DPVOColmapInit:
             logger.error("Pycomlap is not available.")
             use_pycolmap = False
 
+        model = None
         if use_pycolmap:
             # import reconstruction module
             reconstruction = import_module("deep_image_matching.reconstruction")
@@ -120,20 +124,23 @@ class DPVOColmapInit:
             reconst_opts = {}
 
             # Run reconstruction
-            model = reconstruction.main(
-                database=self.output_dir / "database.db",
-                image_dir=self.imgs_dir,
-                sfm_dir=self.output_dir,
-                reconst_opts=reconst_opts,
-                verbose=self.colmap_cfg.general["verbose"],
-            )
-        # use_glomap=True
-        # if use_glomap:
-        #     # glomap mapper --database_path 'database.db' --image_path '../images' --output_path 'glomap_models'
-        #     cmd = f"glomap mapper --database_path {database_path} --image_path {self.imgs_dir} --output_path {self.output_dir}/glomap"
-        #     os.system(cmd)
+            try:
+                model = reconstruction.main(
+                    database=self.output_dir / "database.db",
+                    image_dir=self.imgs_dir,
+                    sfm_dir=self.output_dir,
+                    reconst_opts=reconst_opts,
+                    verbose=self.colmap_cfg.general["verbose"],
+                )
+            except Exception as e:
+                logger.error(f"Reconstruction failed: {e}")
+                use_pycolmap = False
 
-        num_imgs = model.num_reg_images() # number of registered images for the largest model
+        if not use_pycolmap:
+            logger.error("COLMAP failed to initialize, switching to glomap.")
+            use_glomap = True
+
+        num_imgs = model.num_reg_images() if model else 0
         num_all_imgs = len(list(self.imgs_dir.glob("*")))
         target_dir = self.output_dir / "reconstruction"
         if num_imgs < num_all_imgs * 0.7:
@@ -218,7 +225,7 @@ def run_colmap_initialization(imagedir, output_path, skip=0, warmup_frames=50, i
 
             # Try to find an image with sufficient flow
             found_match = False
-            for offset in range(1, min(10, len(image_list) - i)):
+            for offset in range(1, min(20, len(image_list) - i)):
                 compare_idx = i + offset
                 compare_img_path = str(image_list[compare_idx])
                 compare_img = cv2.imread(compare_img_path, cv2.IMREAD_COLOR)
@@ -227,9 +234,9 @@ def run_colmap_initialization(imagedir, output_path, skip=0, warmup_frames=50, i
                     continue
 
                 # Measure motion between images
-                mean_flow, _, _, _, _ = measure_motion(base_img, compare_img, threshold=1.0)
+                mean_flow, mean_flow_scaled, _, mean_norm, _, _ = measure_motion(base_img, compare_img, threshold=1.0)
 
-                if mean_flow >= flow_threshold:
+                if mean_flow_scaled >= flow_threshold:
                     # Found sufficient flow - save both images
                     cv2.imwrite(f"{colmap_initial_images}/{len(selected_images):06d}.png", base_img)
                     selected_images.append(image_list[i])
@@ -238,7 +245,7 @@ def run_colmap_initialization(imagedir, output_path, skip=0, warmup_frames=50, i
                         cv2.imwrite(f"{colmap_initial_images}/{len(selected_images):06d}.png", compare_img)
                         selected_images.append(image_list[compare_idx])
 
-                    print(f"Selected pair with flow {mean_flow:.2f}: images {i} and {compare_idx}")
+                    print(f"Selected pair with flow {mean_flow_scaled:.2f}: images {i} and {compare_idx}")
                     i = compare_idx + 1
                     found_match = True
                     break
