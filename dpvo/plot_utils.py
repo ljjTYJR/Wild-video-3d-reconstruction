@@ -1,16 +1,16 @@
+import os
 from copy import deepcopy
+from formatter.colmap_utilis import colmap_to_json
+from itertools import chain
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from evo.core import sync
 from evo.core.trajectory import PoseTrajectory3D
 from evo.tools import plot
-from pathlib import Path
-import os
 from loguru import logger
 
-from formatter.colmap_utilis import colmap_to_json
-from itertools import chain
 
 def make_traj(args) -> PoseTrajectory3D:
     if isinstance(args, tuple):
@@ -65,6 +65,8 @@ def save_output_for_COLMAP(name: str, tstamp: np.ndarray, traj: PoseTrajectory3D
     logger.info(f"Saving COLMAP-compatible reconstruction in {colmap_dir.resolve()}")
 
     original_image_path = Path(name).parent.joinpath("images")
+    if not os.path.exists(original_image_path):
+        original_image_path = Path(name).parent.joinpath("data")
     traj = PoseTrajectory3D(poses_se3=list(map(np.linalg.inv, traj.poses_se3)), timestamps=traj.timestamps)
 
     image_list=None

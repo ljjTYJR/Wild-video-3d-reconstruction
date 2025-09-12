@@ -1,12 +1,12 @@
-import cv2
-import torch
-import lietorch
-
-from lietorch import SE3
 from collections import OrderedDict
-from factor_graph import FactorGraph
-from droid_net import DroidNet
+
+import cv2
 import geom.projective_ops as pops
+import lietorch
+import torch
+from droid_net import DroidNet
+from factor_graph import FactorGraph
+from lietorch import SE3
 
 
 class PoseTrajectoryFiller:
@@ -87,7 +87,7 @@ class PoseTrajectoryFiller:
         images = []
         intrinsics = []
 
-        for (tstamp, image, intrinsic) in image_stream:
+        for (tstamp, image, _, intrinsic) in image_stream:
             tstamps.append(tstamp)
             images.append(image)
             intrinsics.append(intrinsic)

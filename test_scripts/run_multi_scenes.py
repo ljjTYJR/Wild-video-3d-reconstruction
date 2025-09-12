@@ -10,7 +10,7 @@ import sys
 # Base configuration
 BASE_DIR = "/media/shuo/T7/f2nerf/s_h"
 SCENES = [
-    # "forest1", "forest2", "forest3",
+    "forest1", "forest2", "forest3",
     "garden1", "garden2", "garden3",
     "indoor", "playground",
     "university1", "university2", "university3", "university4"
