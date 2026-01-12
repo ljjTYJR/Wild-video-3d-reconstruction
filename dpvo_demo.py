@@ -14,7 +14,6 @@ import numpy as np
 import torch
 import yaml
 from evo.core.trajectory import PoseTrajectory3D
-from loguru import logger
 from plyfile import PlyData, PlyElement
 from tqdm import tqdm
 
@@ -145,7 +144,6 @@ def run(
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp_name', type=str, default='dpvo')
     parser.add_argument('--network', type=str, default='checkpoints/dpvo.pth')
     parser.add_argument('--imagedir', type=str)
     parser.add_argument('--depthdir', type=str)
@@ -177,13 +175,6 @@ if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn', force=True)
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    exp_dir = Path(f"experiments/{args.exp_name}_{timestamp}")
-    exp_dir.mkdir(parents=True, exist_ok=True)
-
-    logger.add(f'{exp_dir}/exp.log',
-               format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}:{function}:{line} - {message}",
-               level="INFO")
-    logger.info(f"Running DPVO: {cfg}")
 
     output_path = Path(args.imagedir).parent / f"dpvo_colmap_{timestamp}_{args.skip}_{args.end}"
 
