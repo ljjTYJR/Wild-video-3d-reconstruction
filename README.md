@@ -1,5 +1,15 @@
 # 3D reconstruction from in-the-wild videos
 
+## Table of Contents
+- [Installation](#installation)
+  - [Prerequisites](#prerequisites)
+  - [Setup Steps](#setup-steps)
+- [Usage](#usage)
+  - [Running the Demo](#running-the-demo)
+- [Data](#data)
+  - [Videos used in the paper](#videos-used-in-the-paper)
+  - [Extract frames from videos](#extract-frames-from-videos)
+
 ## Installation
 
 ### Prerequisites
