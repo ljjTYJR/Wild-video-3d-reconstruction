@@ -1,14 +1,4 @@
-# Visual SLAM System
-
-A robust visual SLAM pipeline for real-time camera tracking and 3D reconstruction, featuring deep learning-based pose estimation and bundle adjustment.
-
-## Overview
-
-This project provides a complete visual SLAM system with:
-- Real-time frame-by-frame camera tracking and mapping
-- Deep learning-based pose and depth optimization on keyframe windows
-- Optional local map maintenance for enhanced performance
-- Support for monocular and depth-aided configurations
+# 3D reconstruction from in-the-wild videos
 
 ## Installation
 
@@ -34,8 +24,12 @@ This project provides a complete visual SLAM system with:
    conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
    ```
 
-3. **Install glomap:**
-   Refer to : https://github.com/colmap/glomap
+3. **Install other dependencies:**
+   - Install COLMAP & GLOMAP: Refer to https://github.com/colmap/glomap
+   - Install `hloc` (for loop closure detection):
+     ```bash
+     pip install git+https://github.com/cvg/Hierarchical-Localization.git@v1.4
+     ```
 
 4. **Install the lietorch library:**
    ```bash
@@ -46,13 +40,14 @@ This project provides a complete visual SLAM system with:
    ```bash
    pip install -e .
    ```
-6. Mask and depths:
-   1. We use `UniDepth` to generate dense depth maps;
-   2. We use `MaskRCNN` to generate dynamic object masks.
+
+6. **Mask and depth generation tools:**
+   - We use `UniDepth` to generate dense depth maps
+   - We use `MaskRCNN` to generate dynamic object masks
 
 ## Usage
 
-### Basic Demo
+### Running the Demo
 
 Run the SLAM system on an image sequence:
 
@@ -61,36 +56,40 @@ conda activate dpvo
 python dpvo_demo.py \
   --imagedir=/path/to/images \
   --depthdir=/path/to/depths \
-  --maskdir=/path/to/masks \
-  # --calib=calib/calibration.txt \ (optional)
+  --calib=calib/calibration.txt \
   --stride=1 \
+  --skip=0 \
   --buffer=2048 \
-  --keyframe_thresh=2.0 \
-  --rerun
+  --export_colmap
 ```
 
-**Arguments:**
-- `--imagedir`: Path to input image directory (required)
-- `--depthdir`: Path to depth maps (optional)
-- `--maskdir`: Path to dynamic object masks (optional)
-- `--calib`: Camera calibration file path (optional, will be estimated if not provided)
+**Required Arguments:**
+- `--imagedir`: Path to input image directory
+
+**Optional Arguments:**
+- `--depthdir`: Path to depth maps (enables depth-aided tracking)
+- `--maskdir`: Path to dynamic object masks (filters dynamic objects)
+- `--calib`: Camera calibration file (format: `fx fy cx cy [k1 k2 p1 p2 k3]`)
 - `--stride`: Frame sampling stride (default: 1)
+- `--skip`: Number of initial frames to skip (default: 0)
 - `--buffer`: Maximum buffer size for keyframes (default: 2048)
-- `--keyframe_thresh`: Threshold for keyframe selection (default: 2.0)
-- `--export_colmap`: Export results in COLMAP format
-- `--rerun`: Enable Rerun visualization
-- `--disable_vis`: Disable visualization during processing
-
-### Camera Calibration Format
-
-Calibration files should contain camera intrinsics in the following format:
-```
-fx fy cx cy [k1 k2 p1 p2 k3]
-```
-where `fx, fy, cx, cy` are the focal lengths and principal point, and the distortion coefficients are optional.
+- `--export_colmap`: Export results in COLMAP format for further processing
+- `--rerun`: Enable Rerun visualization (https://rerun.io/)
+- `--loop_enabled`: Enable loop closure detection
 
 
-## References
+## Data
 
-- [DROID-SLAM](https://github.com/princeton-vl/DROID-SLAM)
-- [DPT](https://github.com/isl-org/DPT)
+### Videos used in the paper:
+
+| Name                | Link                                                       | Description |
+| ------------------- | ---------------------------------------------------------- | ----------- |
+| Yanshan Park, China | [Link](https://www.youtube.com/watch?v=D8B30GIX)           |             |
+| Taicang Park, China | [Link](https://www.youtube.com/watch?v=LJf7LKLvmUc)        |             |
+| Helsingborg, Sweden | [Link](https://www.youtube.com/watch?v=wUZ_zslH3vY&t=300s) |             |
+
+### Extract frames from videos
+1. Install the youtube video download tool:
+   https://github.com/yt-dlp/yt-dlp
+
+2. Use ffmpeg to extract frames. We extract with resolution with 512*384 and with 5 FPS with 15 minutes each video clip.
