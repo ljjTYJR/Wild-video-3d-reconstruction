@@ -1,5 +1,11 @@
 # 3D reconstruction from in-the-wild videos
 
+[![arXiv](https://img.shields.io/badge/arXiv-2504.20496-b31b1b.svg)](https://arxiv.org/abs/2504.20496)
+
+## Overview
+
+<img src="media/overview-1.png" width="600"/>
+
 ## Table of Contents
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
